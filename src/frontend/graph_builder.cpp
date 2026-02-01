@@ -48,7 +48,6 @@
 #include "hydra/common/launch_callbacks.h"
 #include "hydra/common/pipeline_queues.h"
 #include "hydra/frontend/frontier_extractor.h"
-#include "hydra/frontend/mesh_segmenter.h"
 #include "hydra/utils/pgmo_mesh_interface.h"
 #include "hydra/utils/pgmo_mesh_traits.h"  // IWYU pragma: keep
 #include "hydra/utils/printing.h"
@@ -126,7 +125,7 @@ GraphBuilder::GraphBuilder(const Config& config,
       sinks_(Sink::instantiate(config.sinks)) {
   const auto& global_info = GlobalInfo::instance();
   if (config.enable_mesh_objects) {
-    segmenter_ = std::make_unique<MeshSegmenter>(
+    mesh_objects_ = std::make_unique<ObjectExtractor>(
         config.object_config, global_info.getLabelSpaceConfig().object_labels);
   }
 
@@ -450,7 +449,7 @@ void GraphBuilder::updateMesh(const ActiveWindowOutput& input) {
 }
 
 void GraphBuilder::updateObjects(const ActiveWindowOutput& input) {
-  if (!segmenter_) {
+  if (!mesh_objects_) {
     return;
   }
 
@@ -460,10 +459,10 @@ void GraphBuilder::updateObjects(const ActiveWindowOutput& input) {
   }
 
   const auto stamp = input.timestamp_ns;
-  const auto clusters = segmenter_->detect(stamp, *last_mesh_update_, mesh_offsets_);
+  const auto clusters = mesh_objects_->detect(stamp, *last_mesh_update_, mesh_offsets_);
   {  // start dsg critical section
     std::unique_lock<std::mutex> lock(dsg_->mutex);
-    segmenter_->updateGraph(stamp, mesh_offsets_, clusters, *dsg_->graph);
+    mesh_objects_->updateGraph(stamp, mesh_offsets_, clusters, *dsg_->graph);
   }  // end dsg critical section
 }
 

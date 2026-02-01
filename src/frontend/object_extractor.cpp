@@ -32,7 +32,7 @@
  * Government is authorized to reproduce and distribute reprints for Government
  * purposes notwithstanding any copyright notation herein.
  * -------------------------------------------------------------------------- */
-#include "hydra/frontend/mesh_segmenter.h"
+#include "hydra/frontend/object_extractor.h"
 
 #include <config_utilities/config.h>
 #include <config_utilities/types/conversions.h>
@@ -50,13 +50,13 @@
 
 namespace hydra {
 
-using Cluster = MeshSegmenter::Cluster;
-using LabelClusters = MeshSegmenter::LabelClusters;
+using Cluster = ObjectExtractor::Cluster;
+using LabelClusters = ObjectExtractor::LabelClusters;
 using timing::ScopedTimer;
 
-void declare_config(MeshSegmenter::Config& config) {
+void declare_config(ObjectExtractor::Config& config) {
   using namespace config;
-  name("MeshSegmenterConfig");
+  name("ObjectExtractor::Config");
   field(config.layer_id, "layer_id");
   field(config.clustering, "clustering", false);
   enum_field(config.bounding_box_type,
@@ -93,7 +93,7 @@ inline bool nodesMatch(const Cluster& cluster, const SceneGraphNode& node) {
 }
 
 // TODO(nathan) move node ID to not be here
-MeshSegmenter::MeshSegmenter(const Config& config, const std::set<uint32_t>& labels)
+ObjectExtractor::ObjectExtractor(const Config& config, const std::set<uint32_t>& labels)
     : config(config::checkValid(config)),
       next_node_id_('O', 0),
       labels_(labels),
@@ -104,7 +104,7 @@ MeshSegmenter::MeshSegmenter(const Config& config, const std::set<uint32_t>& lab
   }
 }
 
-LabelClusters MeshSegmenter::detect(uint64_t stamp_ns,
+LabelClusters ObjectExtractor::detect(uint64_t stamp_ns,
                                     const kimera_pgmo::MeshDelta& delta,
                                     const kimera_pgmo::MeshOffsetInfo& offsets) {
   ScopedTimer timer(config.timer_namespace + "_detection", stamp_ns, true, 1, false);
@@ -161,7 +161,7 @@ LabelClusters MeshSegmenter::detect(uint64_t stamp_ns,
   return label_clusters;
 }
 
-void MeshSegmenter::updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
+void ObjectExtractor::updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
                                    DynamicSceneGraph& graph) {
   for (auto& [label, label_nodes] : active_nodes_) {
     auto iter = label_nodes.begin();
@@ -197,7 +197,7 @@ void MeshSegmenter::updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
   }
 }
 
-void MeshSegmenter::updateGraph(uint64_t timestamp_ns,
+void ObjectExtractor::updateGraph(uint64_t timestamp_ns,
                                 const kimera_pgmo::MeshOffsetInfo& offsets,
                                 const LabelClusters& clusters,
                                 DynamicSceneGraph& graph) {
@@ -230,7 +230,7 @@ void MeshSegmenter::updateGraph(uint64_t timestamp_ns,
   }
 }
 
-void MeshSegmenter::mergeActiveNodes(DynamicSceneGraph& graph, uint32_t label) {
+void ObjectExtractor::mergeActiveNodes(DynamicSceneGraph& graph, uint32_t label) {
   std::set<NodeId> merged_nodes;
 
   auto& curr_active = active_nodes_.at(label);
@@ -275,7 +275,7 @@ void MeshSegmenter::mergeActiveNodes(DynamicSceneGraph& graph, uint32_t label) {
   }
 }
 
-std::unordered_set<NodeId> MeshSegmenter::getActiveNodes() const {
+std::unordered_set<NodeId> ObjectExtractor::getActiveNodes() const {
   std::unordered_set<NodeId> active_nodes;
   for (const auto& label_nodes_pair : active_nodes_) {
     active_nodes.insert(label_nodes_pair.second.begin(), label_nodes_pair.second.end());
@@ -283,7 +283,7 @@ std::unordered_set<NodeId> MeshSegmenter::getActiveNodes() const {
   return active_nodes;
 }
 
-void MeshSegmenter::updateNodeInGraph(DynamicSceneGraph& graph,
+void ObjectExtractor::updateNodeInGraph(DynamicSceneGraph& graph,
                                       const Cluster& cluster,
                                       const SceneGraphNode& node,
                                       uint64_t timestamp) {
@@ -295,7 +295,7 @@ void MeshSegmenter::updateNodeInGraph(DynamicSceneGraph& graph,
   updateObjectGeometry(*graph.mesh(), attrs);
 }
 
-void MeshSegmenter::addNodeToGraph(DynamicSceneGraph& graph,
+void ObjectExtractor::addNodeToGraph(DynamicSceneGraph& graph,
                                    const Cluster& cluster,
                                    uint32_t label,
                                    uint64_t timestamp) {

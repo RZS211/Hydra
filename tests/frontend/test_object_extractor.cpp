@@ -34,7 +34,7 @@
  * -------------------------------------------------------------------------- */
 #include <glog/logging.h>
 #include <gtest/gtest.h>
-#include <hydra/frontend/mesh_segmenter.h>
+#include <hydra/frontend/object_extractor.h>
 #include <hydra/utils/pgmo_mesh_traits.h>
 #include <kimera_pgmo/mesh_delta.h>
 
@@ -80,7 +80,7 @@ bool checkNode(const DynamicSceneGraph& graph,
 
 void stepSegmenter(const MeshDelta& delta,
                    kimera_pgmo::MeshOffsetInfo& offsets,
-                   MeshSegmenter& segmenter,
+                   ObjectExtractor& segmenter,
                    DynamicSceneGraph& graph) {
   delta.updateMesh(*graph.mesh(), offsets);
   const auto clusters = segmenter.detect(0, delta, offsets);
@@ -103,10 +103,10 @@ void addPoints(MeshDelta& delta,
 
 }  // namespace
 
-TEST(MeshSegmenter, TestClustering) {
-  MeshSegmenter::Config config;
+TEST(ObjectExtractor, TestClustering) {
+  ObjectExtractor::Config config;
   config.clustering.min_cluster_size = 4;
-  MeshSegmenter segmenter(config, {1, 2});
+  ObjectExtractor segmenter(config, {1, 2});
 
   MeshDelta delta({0, 0, 0});
   addPoints(delta, 1, {1, 2, 3}, Eigen::Vector3f::Constant(0.1));
@@ -116,14 +116,14 @@ TEST(MeshSegmenter, TestClustering) {
   ASSERT_EQ(clusters.size(), 2u);
 }
 
-TEST(MeshSegmenter, TestIndicesRemapping) {
+TEST(ObjectExtractor, TestIndicesRemapping) {
   Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
   const BoundingBox b1(dims, Eigen::Vector3f(1, 2, 3));
   const BoundingBox b2(dims, Eigen::Vector3f(4, 5, 6));
 
-  MeshSegmenter::Config config;
+  ObjectExtractor::Config config;
   config.clustering.min_cluster_size = 4;
-  MeshSegmenter segmenter(config, {1, 2});
+  ObjectExtractor segmenter(config, {1, 2});
 
   DynamicSceneGraph graph;
   kimera_pgmo::MeshOffsetInfo offsets;
@@ -175,13 +175,13 @@ TEST(MeshSegmenter, TestIndicesRemapping) {
   }
 }
 
-TEST(MeshSegmenter, TestDeletedObject) {
+TEST(ObjectExtractor, TestDeletedObject) {
   Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
   const spark_dsg::BoundingBox b2(dims, Eigen::Vector3f(4, 5, 6));
 
-  MeshSegmenter::Config config;
+  ObjectExtractor::Config config;
   config.clustering.min_cluster_size = 4;
-  MeshSegmenter segmenter(config, {1, 2});
+  ObjectExtractor segmenter(config, {1, 2});
 
   DynamicSceneGraph graph;
   kimera_pgmo::MeshOffsetInfo offsets;
@@ -215,14 +215,14 @@ TEST(MeshSegmenter, TestDeletedObject) {
   }
 }
 
-TEST(MeshSegmenter, TestArchivedObject) {
+TEST(ObjectExtractor, TestArchivedObject) {
   Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
   const BoundingBox b1(dims, Eigen::Vector3f(1, 2, 3));
   const BoundingBox b2(dims, Eigen::Vector3f(4, 5, 6));
 
-  MeshSegmenter::Config config;
+  ObjectExtractor::Config config;
   config.clustering.min_cluster_size = 4;
-  MeshSegmenter segmenter(config, {1, 2});
+  ObjectExtractor segmenter(config, {1, 2});
 
   DynamicSceneGraph graph;
   kimera_pgmo::MeshOffsetInfo offsets;
@@ -263,13 +263,13 @@ TEST(MeshSegmenter, TestArchivedObject) {
   }
 }
 
-TEST(MeshSegmenter, TestDeltaWithOffset) {
+TEST(ObjectExtractor, TestDeltaWithOffset) {
   Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
   const BoundingBox b1(dims, Eigen::Vector3f(1, 2, 3));
 
-  MeshSegmenter::Config config;
+  ObjectExtractor::Config config;
   config.clustering.min_cluster_size = 4;
-  MeshSegmenter segmenter(config, {1, 2});
+  ObjectExtractor segmenter(config, {1, 2});
 
   DynamicSceneGraph graph;
   kimera_pgmo::MeshOffsetInfo offsets;

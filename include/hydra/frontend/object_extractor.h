@@ -47,7 +47,7 @@ namespace hydra {
 using clustering::Clusters;
 using clustering::LabelIndices;
 
-class MeshSegmenter {
+class ObjectExtractor {
  public:
   struct Cluster {
     Eigen::Vector3d centroid;
@@ -68,7 +68,7 @@ class MeshSegmenter {
     std::vector<Sink::Factory> sinks;
   } const config;
 
-  explicit MeshSegmenter(const Config& config, const std::set<uint32_t>& labels);
+  explicit ObjectExtractor(const Config& config, const std::set<uint32_t>& labels);
 
   LabelClusters detect(uint64_t timestamp_ns,
                        const kimera_pgmo::MeshDelta& active,
@@ -104,6 +104,6 @@ class MeshSegmenter {
   Sink::List sinks_;
 };
 
-void declare_config(MeshSegmenter::Config& config);
+void declare_config(ObjectExtractor::Config& config);
 
 }  // namespace hydra

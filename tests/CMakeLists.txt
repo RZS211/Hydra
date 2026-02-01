@@ -19,7 +19,7 @@ add_executable(
   common/test_config_utilities.cpp
   common/test_shared_dsg_info.cpp
   frontend/test_graph_connector.cpp
-  frontend/test_mesh_segmenter.cpp
+  frontend/test_object_extractor.cpp
   input/test_camera.cpp
   input/test_input_packet.cpp
   input/test_lidar.cpp
