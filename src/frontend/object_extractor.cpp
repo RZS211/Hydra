@@ -39,76 +39,70 @@
 #include <config_utilities/types/enum.h>
 #include <config_utilities/validation.h>
 #include <glog/logging.h>
-#include <glog/stl_logging.h>
-#include <kimera_pgmo/mesh_delta.h>
-#include <kimera_pgmo/mesh_traits.h>
 #include <spark_dsg/bounding_box_extraction.h>
 #include <spark_dsg/printing.h>
 
-#include "hydra/utils/mesh_utilities.h"
 #include "hydra/utils/timing_utilities.h"
 
 namespace hydra {
+namespace {
 
-using Cluster = ObjectExtractor::Cluster;
-using LabelClusters = ObjectExtractor::LabelClusters;
+inline std::string printLabels(const std::set<uint32_t>& labels) {
+  std::stringstream ss;
+  ss << "[";
+  auto iter = labels.begin();
+  while (iter != labels.end()) {
+    ss << static_cast<uint64_t>(*iter);
+    ++iter;
+    if (iter != labels.end()) {
+      ss << ", ";
+    }
+  }
+  ss << "]";
+  return ss.str();
+}
+
+}  // namespace
+
 using timing::ScopedTimer;
+
+using spark_dsg::BoundingBox;
+using spark_dsg::DynamicSceneGraph;
+using spatial_hash::IndexSet;
+
+ObjectExtractor::Config::Config() : VerbosityConfig("[object_extractor] ") {}
 
 void declare_config(ObjectExtractor::Config& config) {
   using namespace config;
   name("ObjectExtractor::Config");
+  base<VerbosityConfig>(config);
   field(config.layer_id, "layer_id");
-  field(config.clustering, "clustering", false);
+  field(config.grid_resolution_m, "grid_resolution_m");
   enum_field(config.bounding_box_type,
              "bounding_box_type",
-             {{spark_dsg::BoundingBox::Type::INVALID, "INVALID"},
-              {spark_dsg::BoundingBox::Type::AABB, "AABB"},
-              {spark_dsg::BoundingBox::Type::OBB, "OBB"},
-              {spark_dsg::BoundingBox::Type::RAABB, "RAABB"}});
-  field(config.timer_namespace, "timer_namespace");
+             {{BoundingBox::Type::INVALID, "INVALID"},
+              {BoundingBox::Type::AABB, "AABB"},
+              {BoundingBox::Type::OBB, "OBB"},
+              {BoundingBox::Type::RAABB, "RAABB"}});
   field(config.sinks, "sinks");
+
+  check(config.grid_resolution_m, GT, 0.0f, "grid_resolution_m");
 }
 
-template <typename LList, typename RList>
-void mergeList(LList& lhs, const RList& rhs) {
-  std::unordered_set<size_t> seen(lhs.begin(), lhs.end());
-  for (const auto idx : rhs) {
-    if (seen.count(idx)) {
-      continue;
-    }
-
-    lhs.push_back(idx);
-    seen.insert(idx);
-  }
-}
-
-inline bool nodesMatch(const SceneGraphNode& lhs_node, const SceneGraphNode& rhs_node) {
-  return lhs_node.attributes<SemanticNodeAttributes>().bounding_box.contains(
-      rhs_node.attributes().position);
-}
-
-inline bool nodesMatch(const Cluster& cluster, const SceneGraphNode& node) {
-  return node.attributes<SemanticNodeAttributes>().bounding_box.contains(
-      cluster.centroid);
-}
-
-// TODO(nathan) move node ID to not be here
 ObjectExtractor::ObjectExtractor(const Config& config, const std::set<uint32_t>& labels)
     : config(config::checkValid(config)),
-      next_node_id_('O', 0),
+      sinks_(Sink::instantiate(config.sinks)),
       labels_(labels),
-      sinks_(Sink::instantiate(config.sinks)) {
-  VLOG(2) << "[Mesh Segmenter] using labels: " << clustering::printLabels(labels_);
-  for (const auto& label : labels_) {
-    active_nodes_[label] = std::set<NodeId>();
-  }
+      next_node_id_('O', 0),
+      grid_(config.grid_resolution_m) {
+  MLOG(1) << "using labels: " << printLabels(labels_);
 }
 
-LabelClusters ObjectExtractor::detect(uint64_t stamp_ns,
-                                    const kimera_pgmo::MeshDelta& delta,
-                                    const kimera_pgmo::MeshOffsetInfo& offsets) {
-  ScopedTimer timer(config.timer_namespace + "_detection", stamp_ns, true, 1, false);
+void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
+  ScopedTimer timer("frontend/object_detection", msg.timestamp_ns, true, 1, false);
+  updatePoints(msg);
 
+  /*
   LabelClusters label_clusters;
   if (!delta.getNumActiveVertices()) {
     VLOG(2) << "[Mesh Segmenter] No active indices in mesh";
@@ -118,7 +112,6 @@ LabelClusters ObjectExtractor::detect(uint64_t stamp_ns,
   const auto label_indices = clustering::getLabelIndices(labels_, delta);
   if (label_indices.empty()) {
     VLOG(2) << "[Mesh Segmenter] No vertices found matching desired labels";
-    Sink::callAll(sinks_, stamp_ns, delta, label_indices, {});
     return label_clusters;
   }
 
@@ -146,23 +139,44 @@ LabelClusters ObjectExtractor::detect(uint64_t stamp_ns,
     VLOG(2) << "[Mesh Segmenter] Found " << clusters.size() << " cluster(s) of label "
             << label;
   }
+  */
 
-  Sink::callAll(sinks_, stamp_ns, delta, label_indices, label_clusters);
-
-  // TODO(nathan) fix this
-  for (auto& [label, clusters] : label_clusters) {
-    for (auto& cluster : clusters) {
-      for (auto& idx : cluster.indices) {
-        idx = offsets.toGlobalVertex(idx);
-      }
-    }
-  }
-
-  return label_clusters;
+  Sink::callAll(sinks_, msg);
 }
 
+void ObjectExtractor::updatePoints(const ActiveWindowOutput& msg) {
+  const auto& map = msg.map();
+  // TODO(nathan) clear freespace points with TSDF
+
+  const auto& mesh = map.getMeshLayer();
+  for (const auto& block : mesh) {
+    if (!block.has_labels) {
+      continue;
+    }
+
+    for (size_t idx = 0; idx < block.numVertices(); ++idx) {
+      const auto label = block.label(idx);
+      if (!labels_.count(label)) {
+        continue;
+      }
+
+      const auto& pos = block.pos(idx);
+      const auto grid_idx = grid_.toIndex(pos);
+      auto iter = points_.find(label);
+      if (iter == points_.end()) {
+        iter = points_.emplace(label, IndexSet{}).first;
+      }
+
+      iter->second.insert(grid_idx);
+    }
+  }
+}
+
+void ObjectExtractor::updateGraph(uint64_t timestamp_ns, DynamicSceneGraph& graph) {}
+
+/*
 void ObjectExtractor::updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
-                                   DynamicSceneGraph& graph) {
+                                     DynamicSceneGraph& graph) {
   for (auto& [label, label_nodes] : active_nodes_) {
     auto iter = label_nodes.begin();
     while (iter != label_nodes.end()) {
@@ -198,9 +212,9 @@ void ObjectExtractor::updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
 }
 
 void ObjectExtractor::updateGraph(uint64_t timestamp_ns,
-                                const kimera_pgmo::MeshOffsetInfo& offsets,
-                                const LabelClusters& clusters,
-                                DynamicSceneGraph& graph) {
+                                  const kimera_pgmo::MeshOffsetInfo& offsets,
+                                  const LabelClusters& clusters,
+                                  DynamicSceneGraph& graph) {
   ScopedTimer timer(config.timer_namespace + "_graph_update", timestamp_ns);
   updateOldNodes(offsets, graph);
   if (!graph.hasMesh()) {
@@ -284,9 +298,9 @@ std::unordered_set<NodeId> ObjectExtractor::getActiveNodes() const {
 }
 
 void ObjectExtractor::updateNodeInGraph(DynamicSceneGraph& graph,
-                                      const Cluster& cluster,
-                                      const SceneGraphNode& node,
-                                      uint64_t timestamp) {
+                                        const Cluster& cluster,
+                                        const SceneGraphNode& node,
+                                        uint64_t timestamp) {
   auto& attrs = node.attributes<ObjectNodeAttributes>();
   attrs.last_update_time_ns = timestamp;
   attrs.is_active = true;
@@ -296,9 +310,9 @@ void ObjectExtractor::updateNodeInGraph(DynamicSceneGraph& graph,
 }
 
 void ObjectExtractor::addNodeToGraph(DynamicSceneGraph& graph,
-                                   const Cluster& cluster,
-                                   uint32_t label,
-                                   uint64_t timestamp) {
+                                     const Cluster& cluster,
+                                     uint32_t label,
+                                     uint64_t timestamp) {
   if (cluster.indices.empty()) {
     LOG(ERROR) << "Encountered empty cluster with label" << static_cast<int>(label)
                << " @ " << timestamp << "[ns]";
@@ -318,5 +332,6 @@ void ObjectExtractor::addNodeToGraph(DynamicSceneGraph& graph,
   active_nodes_.at(label).insert(next_node_id_);
   ++next_node_id_;
 }
+*/
 
 }  // namespace hydra

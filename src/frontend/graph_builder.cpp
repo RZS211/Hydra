@@ -148,9 +148,9 @@ GraphBuilder::GraphBuilder(const Config& config,
       std::bind(&GraphBuilder::updateFrontiers, this, std::placeholders::_1));
   addInputCallback(std::bind(
       &GraphBuilder::updateTraversabilityPlaces, this, std::placeholders::_1));
-
-  addPostMeshCallback(
+  addInputCallback(
       std::bind(&GraphBuilder::updateObjects, this, std::placeholders::_1));
+
   addPostMeshCallback(
       std::bind(&GraphBuilder::updatePlaces2d, this, std::placeholders::_1));
 
@@ -459,10 +459,10 @@ void GraphBuilder::updateObjects(const ActiveWindowOutput& input) {
   }
 
   const auto stamp = input.timestamp_ns;
-  const auto clusters = mesh_objects_->detect(stamp, *last_mesh_update_, mesh_offsets_);
+  mesh_objects_->detect(input);
   {  // start dsg critical section
     std::unique_lock<std::mutex> lock(dsg_->mutex);
-    mesh_objects_->updateGraph(stamp, mesh_offsets_, clusters, *dsg_->graph);
+    mesh_objects_->updateGraph(stamp, *dsg_->graph);
   }  // end dsg critical section
 }
 

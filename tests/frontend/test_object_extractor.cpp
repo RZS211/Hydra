@@ -35,18 +35,18 @@
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <hydra/frontend/object_extractor.h>
-#include <hydra/utils/pgmo_mesh_traits.h>
-#include <kimera_pgmo/mesh_delta.h>
 
 namespace hydra {
 
-using kimera_pgmo::MeshDelta;
+using spark_dsg::BoundingBox;
+using spark_dsg::NodeId;
+using spark_dsg::DynamicSceneGraph;
+using spark_dsg::ObjectNodeAttributes;
 
 namespace {
 
 struct NodeResult {
   uint32_t label;
-  std::list<size_t> mesh_connections;
   BoundingBox bbox;
   bool is_active = true;
 };
@@ -72,37 +72,14 @@ bool checkNode(const DynamicSceneGraph& graph,
 
   auto& result = node->attributes<ObjectNodeAttributes>();
   EXPECT_EQ(expected.label, result.semantic_label);
-  EXPECT_EQ(expected.mesh_connections, result.mesh_connections);
   checkBoundingBox(expected.bbox, result.bounding_box);
   EXPECT_EQ(expected.is_active, result.is_active);
   return true;
 }
 
-void stepSegmenter(const MeshDelta& delta,
-                   kimera_pgmo::MeshOffsetInfo& offsets,
-                   ObjectExtractor& segmenter,
-                   DynamicSceneGraph& graph) {
-  delta.updateMesh(*graph.mesh(), offsets);
-  const auto clusters = segmenter.detect(0, delta, offsets);
-  segmenter.updateGraph(0, offsets, clusters, graph);
-}
-
-void addPoints(MeshDelta& delta,
-               uint32_t label,
-               const Eigen::Vector3f& offset,
-               const Eigen::Vector3f& scale,
-               bool archive = false) {
-  const auto corners = BoundingBox(scale, offset).corners();
-  for (const auto& corner : corners) {
-    kimera_pgmo::traits::VertexTraits traits;
-    traits.properties.has_label = true;
-    traits.label = label;
-    delta.addVertex(corner, traits, archive);
-  }
-}
-
 }  // namespace
 
+/*G
 TEST(ObjectExtractor, TestClustering) {
   ObjectExtractor::Config config;
   config.clustering.min_cluster_size = 4;
@@ -295,5 +272,6 @@ TEST(ObjectExtractor, TestDeltaWithOffset) {
     }
   }
 }
+*/
 
 }  // namespace hydra

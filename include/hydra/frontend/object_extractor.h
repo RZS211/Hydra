@@ -33,75 +33,49 @@
  * purposes notwithstanding any copyright notation herein.
  * -------------------------------------------------------------------------- */
 #pragma once
-#include "hydra/common/dsg_types.h"
-#include "hydra/common/output_sink.h"
-#include "hydra/frontend/mesh_delta_clustering.h"
+#include <spark_dsg/dynamic_scene_graph.h>
+#include <spark_dsg/node_attributes.h>
+#include <spatial_hash/grid.h>
 
-namespace kimera_pgmo {
-class MeshDelta;
-struct MeshOffsetInfo;
-}  // namespace kimera_pgmo
+#include "hydra/active_window/active_window_output.h"
+#include "hydra/common/output_sink.h"
+#include "hydra/utils/logging.h"
 
 namespace hydra {
 
-using clustering::Clusters;
-using clustering::LabelIndices;
-
 class ObjectExtractor {
  public:
+  using Sink = OutputSink<const ActiveWindowOutput&>;
+  struct Config : VerbosityConfig {
+    Config();
+    float grid_resolution_m = 0.1f;
+    std::string layer_id = spark_dsg::DsgLayers::OBJECTS;
+    spark_dsg::BoundingBox::Type bounding_box_type = spark_dsg::BoundingBox::Type::AABB;
+    std::vector<Sink::Factory> sinks;
+  } const config;
+
   struct Cluster {
     Eigen::Vector3d centroid;
     std::vector<size_t> indices;
   };
-
   using LabelClusters = std::map<uint32_t, std::vector<Cluster>>;
-  using Sink = OutputSink<uint64_t,
-                          const kimera_pgmo::MeshDelta&,
-                          const LabelIndices&,
-                          const LabelClusters&>;
-
-  struct Config {
-    std::string layer_id = DsgLayers::OBJECTS;
-    clustering::ClusteringConfig clustering;
-    BoundingBox::Type bounding_box_type = BoundingBox::Type::AABB;
-    std::string timer_namespace = "frontend/objects";
-    std::vector<Sink::Factory> sinks;
-  } const config;
 
   explicit ObjectExtractor(const Config& config, const std::set<uint32_t>& labels);
 
-  LabelClusters detect(uint64_t timestamp_ns,
-                       const kimera_pgmo::MeshDelta& active,
-                       const kimera_pgmo::MeshOffsetInfo& offsets);
+  void detect(const ActiveWindowOutput& msg);
 
-  void updateGraph(uint64_t timestamp,
-                   const kimera_pgmo::MeshOffsetInfo& offsets,
-                   const LabelClusters& clusters,
-                   DynamicSceneGraph& graph);
-
-  std::unordered_set<NodeId> getActiveNodes() const;
+  void updateGraph(uint64_t timestamp, spark_dsg::DynamicSceneGraph& graph);
 
  private:
-  void updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
-                      DynamicSceneGraph& graph);
+  void updatePoints(const ActiveWindowOutput& msg);
 
-  void addNodeToGraph(DynamicSceneGraph& graph,
-                      const Cluster& cluster,
-                      uint32_t label,
-                      uint64_t timestamp);
-
-  void updateNodeInGraph(DynamicSceneGraph& graph,
-                         const Cluster& cluster,
-                         const SceneGraphNode& node,
-                         uint64_t timestamp);
-
-  void mergeActiveNodes(DynamicSceneGraph& graph, uint32_t label);
-
- private:
-  NodeSymbol next_node_id_;
-  std::set<uint32_t> labels_;
-  std::map<uint32_t, std::set<NodeId>> active_nodes_;
   Sink::List sinks_;
+  std::set<uint32_t> labels_;
+  spark_dsg::NodeSymbol next_node_id_;
+  // NOTE(nathan) this *should* be okay for windowed approaches but will have collisions
+  // for large (>50m) windows with small resolutions (5cm)
+  spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
+  std::map<uint32_t, spatial_hash::IndexSet> points_;
 };
 
 void declare_config(ObjectExtractor::Config& config);

@@ -110,6 +110,8 @@ class PointNeighborSearch {
               float& distance_squared,
               size_t& index) const;
 
+  std::vector<size_t> pointsInRadius(const Eigen::Vector3f& query, float radius) const;
+
  private:
   struct Detail;
   std::unique_ptr<Detail> internals_;
