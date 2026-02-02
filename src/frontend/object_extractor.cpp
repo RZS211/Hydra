@@ -42,9 +42,6 @@
 #include <spark_dsg/bounding_box_extraction.h>
 #include <spark_dsg/printing.h>
 
-#include <deque>
-
-#include "hydra/utils/nearest_neighbor_utilities.h"
 #include "hydra/utils/timing_utilities.h"
 
 namespace hydra {
@@ -173,42 +170,6 @@ void ObjectExtractor::updatePoints(const ActiveWindowOutput& msg) {
       iter->second.insert(grid_idx);
     }
   }
-}
-
-std::vector<ObjectExtractor::Cluster> segmentPoints(
-    const std::vector<Eigen::Vector3f>& points, float radius_m) {
-  PointNeighborSearch search(points);
-  std::vector<bool> seen(points.size(), false);
-
-  std::vector<ObjectExtractor::Cluster> clusters;
-  for (size_t seed = 0; seed < points.size(); ++seed) {
-    if (seen[seed]) {
-      continue;
-    }
-
-    std::deque<size_t> frontier{seed};
-    auto& cluster = clusters.emplace_back();
-    while (!frontier.empty()) {
-      const size_t i = frontier.front();
-      const auto& pos = points[i];
-      cluster.indices.push_back(i);
-      cluster.centroid += pos;
-      frontier.pop_front();
-      const auto neighbors = search.pointsInRadius(pos, radius_m);
-      for (const auto idx : neighbors) {
-        if (seen[idx]) {
-          continue;
-        }
-
-        frontier.push_back(idx);
-        seen[idx] = true;
-      }
-    }
-
-    cluster.centroid /= cluster.indices.size();
-  }
-
-  return clusters;
 }
 
 void ObjectExtractor::updateGraph(uint64_t timestamp_ns, DynamicSceneGraph& graph) {}

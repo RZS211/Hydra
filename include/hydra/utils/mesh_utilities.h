@@ -62,4 +62,11 @@ spark_dsg::BoundingBox fitBoxToFilteredMesh(const Mesh& mesh,
                                             int inlier_min_neighbors = 5,
                                             double inlier_search_radius = 0.1);
 
+struct Cluster {
+  Mesh::Pos centroid;
+  std::vector<size_t> indices;
+};
+
+std::vector<Cluster> getConnectedComponents(const Mesh::Positions& cloud, float connection_radius);
+
 }  // namespace hydra
