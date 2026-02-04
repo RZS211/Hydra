@@ -42,6 +42,7 @@
 #include <spark_dsg/bounding_box_extraction.h>
 #include <spark_dsg/printing.h>
 
+#include "hydra/utils/mesh_utilities.h"
 #include "hydra/utils/timing_utilities.h"
 
 namespace hydra {
@@ -70,6 +71,46 @@ using spark_dsg::BoundingBox;
 using spark_dsg::DynamicSceneGraph;
 using spatial_hash::IndexSet;
 
+HashedCloud::HashedCloud(float resolution_m) : grid_(resolution_m) {}
+
+const std::vector<HashedCloud::Pos>& HashedCloud::points() const { return points_; }
+
+size_t HashedCloud::size() const { return points_.size(); }
+
+void HashedCloud::addPoint(const Pos& pos, Mode mode) {
+  const auto idx = grid_.toIndex(pos);
+  auto iter = lookup_.find(idx);
+  if (iter == lookup_.end()) {
+    lookup_.emplace(idx, points_.size());
+    points_.push_back(pos);
+    return;
+  }
+
+  float ratio;
+  switch (mode) {
+    case Mode::OVERRIDE:
+      points_[iter->second.index] = pos;
+      break;
+    case Mode::MERGE:
+      ratio = 1.0 / iter->second.count;
+      points_[iter->second.index] =
+          (1.0f - ratio) * points_[iter->second.index] + ratio * pos;
+      iter->second.count++;
+      break;
+    case Mode::DISCARD:
+    default:
+      return;
+  }
+}
+
+void HashedCloud::removePoint(const Pos& pos) {
+  const auto idx = grid_.toIndex(pos);
+  auto iter = lookup_.find(idx);
+  if (iter == lookup_.end()) {
+    return;
+  }
+}
+
 ObjectExtractor::Config::Config() : VerbosityConfig("[object_extractor] ") {}
 
 void declare_config(ObjectExtractor::Config& config) {
@@ -93,8 +134,7 @@ ObjectExtractor::ObjectExtractor(const Config& config, const std::set<uint32_t>&
     : config(config::checkValid(config)),
       sinks_(Sink::instantiate(config.sinks)),
       labels_(labels),
-      next_node_id_('O', 0),
-      grid_(config.grid_resolution_m) {
+      next_node_id_('O', 0) {
   MLOG(1) << "using labels: " << printLabels(labels_);
 }
 
@@ -102,51 +142,42 @@ void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
   ScopedTimer timer("frontend/object_detection", msg.timestamp_ns, true, 1, false);
   updatePoints(msg);
 
-  /*
-  LabelClusters label_clusters;
-  if (!delta.getNumActiveVertices()) {
-    VLOG(2) << "[Mesh Segmenter] No active indices in mesh";
-    return label_clusters;
-  }
-
-  const auto label_indices = clustering::getLabelIndices(labels_, delta);
-  if (label_indices.empty()) {
-    VLOG(2) << "[Mesh Segmenter] No vertices found matching desired labels";
-    return label_clusters;
-  }
-
-  for (const auto& [label, indices] : label_indices) {
-    if (indices.size() < config.clustering.min_cluster_size) {
+  for (const auto& [label, cloud] : points_) {
+    if (cloud.size() < config.min_object_size) {
+      MLOG(2) << "skipping label " << label << " with " << cloud.size() << " points";
       continue;
     }
 
-    const auto result = clustering::findClusters(config.clustering, delta, indices);
-
-    auto iter = label_clusters.insert({label, {}}).first;
-    auto& clusters = iter->second;
-    for (const auto& cluster_indices : result) {
-      auto& cluster = clusters.emplace_back();
-      for (const auto local_idx : cluster_indices) {
-        cluster.indices.push_back(local_idx);
-        cluster.centroid += delta.getVertex(local_idx).pos.cast<double>();
+    const auto clusters =
+        getConnectedComponents(cloud.points(), config.cluster_tolerance);
+    MLOG(2) << "found " << clusters.size() << " cluster(s) of label " << label;
+    for (const auto& cluster : clusters) {
+      if (cluster.indices.size() < config.min_object_size) {
+        continue;
       }
 
-      if (cluster_indices.size()) {
-        cluster.centroid /= cluster_indices.size();
-      }
+      // TODO(nathan) match cluster to current objects
     }
-
-    VLOG(2) << "[Mesh Segmenter] Found " << clusters.size() << " cluster(s) of label "
-            << label;
   }
-  */
 
   Sink::callAll(sinks_, msg);
 }
 
 void ObjectExtractor::updatePoints(const ActiveWindowOutput& msg) {
   const auto& map = msg.map();
-  // TODO(nathan) clear freespace points with TSDF
+  const auto& tsdf = map.getTsdfLayer();
+  for (auto& [label, cloud] : points_) {
+    for (const auto& pos : cloud.points()) {
+      const auto voxel = tsdf.getVoxelPtr(pos);
+      if (!voxel || voxel->weight < config.min_observation_weight) {
+        continue;
+      }
+
+      if (voxel->distance > 0.0f) {
+        cloud.removePoint(pos);
+      }
+    }
+  }
 
   const auto& mesh = map.getMeshLayer();
   for (const auto& block : mesh) {
@@ -160,14 +191,12 @@ void ObjectExtractor::updatePoints(const ActiveWindowOutput& msg) {
         continue;
       }
 
-      const auto& pos = block.pos(idx);
-      const auto grid_idx = grid_.toIndex(pos);
       auto iter = points_.find(label);
       if (iter == points_.end()) {
-        iter = points_.emplace(label, IndexSet{}).first;
+        iter = points_.emplace(label, HashedCloud(config.grid_resolution_m)).first;
       }
 
-      iter->second.insert(grid_idx);
+      iter->second.addPoint(block.pos(idx));
     }
   }
 }

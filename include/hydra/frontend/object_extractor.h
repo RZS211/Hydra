@@ -43,13 +43,48 @@
 
 namespace hydra {
 
+  /// TODO(nathan) fix this structure
+struct HashedCloud {
+  enum class Mode {
+    OVERRIDE,
+    DISCARD,
+    MERGE,
+  };
+  using Pos = spark_dsg::Mesh::Pos;
+
+  explicit HashedCloud(float resolution_m);
+
+  const std::vector<Pos>& points() const;
+
+  void addPoint(const Pos& pos, Mode mode = Mode::DISCARD);
+
+  void removePoint(const Pos& pos);
+
+  size_t size() const;
+
+ private:
+  const spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
+  std::vector<Pos> points_;
+
+  struct Entry {
+    size_t index;
+    size_t count = 1;
+  };
+  spatial_hash::IndexHashMap<Entry> lookup_;
+};
+
 class ObjectExtractor {
  public:
   using Sink = OutputSink<const ActiveWindowOutput&>;
   struct Config : VerbosityConfig {
     Config();
-    float grid_resolution_m = 0.1f;
+
     std::string layer_id = spark_dsg::DsgLayers::OBJECTS;
+    float grid_resolution_m = 0.05f;
+    bool clear_freespace = true;
+    float min_observation_weight = 1.0e-4f;
+    size_t min_object_size = 30;
+    float cluster_tolerance = 0.25f;
     spark_dsg::BoundingBox::Type bounding_box_type = spark_dsg::BoundingBox::Type::AABB;
     std::vector<Sink::Factory> sinks;
   } const config;
@@ -72,10 +107,7 @@ class ObjectExtractor {
   Sink::List sinks_;
   std::set<uint32_t> labels_;
   spark_dsg::NodeSymbol next_node_id_;
-  // NOTE(nathan) this *should* be okay for windowed approaches but will have collisions
-  // for large (>50m) windows with small resolutions (5cm)
-  spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
-  std::map<uint32_t, spatial_hash::IndexSet> points_;
+  std::map<uint32_t, HashedCloud> points_;
 };
 
 void declare_config(ObjectExtractor::Config& config);
