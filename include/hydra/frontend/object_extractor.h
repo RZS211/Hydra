@@ -43,14 +43,16 @@
 
 namespace hydra {
 
-  /// TODO(nathan) fix this structure
+/// TODO(nathan) fix this structure
 struct HashedCloud {
+  using Ptr = std::unique_ptr<HashedCloud>;
+  using Pos = spark_dsg::Mesh::Pos;
+
   enum class Mode {
     OVERRIDE,
     DISCARD,
     MERGE,
   };
-  using Pos = spark_dsg::Mesh::Pos;
 
   explicit HashedCloud(float resolution_m);
 
@@ -58,12 +60,18 @@ struct HashedCloud {
 
   void addPoint(const Pos& pos, Mode mode = Mode::DISCARD);
 
-  void removePoint(const Pos& pos);
+  void erase(const std::function<bool(const Pos&)>& should_erase,
+             std::set<size_t>* erased = nullptr);
 
   size_t size() const;
 
+  float intersection(const HashedCloud& other) const;
+
+  float iou(const HashedCloud& other) const;
+
  private:
   const spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
+  const float volume_;
   std::vector<Pos> points_;
 
   struct Entry {
@@ -89,12 +97,6 @@ class ObjectExtractor {
     std::vector<Sink::Factory> sinks;
   } const config;
 
-  struct Cluster {
-    Eigen::Vector3d centroid;
-    std::vector<size_t> indices;
-  };
-  using LabelClusters = std::map<uint32_t, std::vector<Cluster>>;
-
   explicit ObjectExtractor(const Config& config, const std::set<uint32_t>& labels);
 
   void detect(const ActiveWindowOutput& msg);
@@ -104,10 +106,16 @@ class ObjectExtractor {
  private:
   void updatePoints(const ActiveWindowOutput& msg);
 
+  struct ObjectCloud {
+    uint32_t label;
+    HashedCloud cloud;
+  };
+
   Sink::List sinks_;
   std::set<uint32_t> labels_;
   spark_dsg::NodeSymbol next_node_id_;
   std::map<uint32_t, HashedCloud> points_;
+  std::map<spark_dsg::NodeId, HashedCloud::Ptr> objects_;
 };
 
 void declare_config(ObjectExtractor::Config& config);

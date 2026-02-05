@@ -71,7 +71,9 @@ using spark_dsg::BoundingBox;
 using spark_dsg::DynamicSceneGraph;
 using spatial_hash::IndexSet;
 
-HashedCloud::HashedCloud(float resolution_m) : grid_(resolution_m) {}
+HashedCloud::HashedCloud(float resolution_m)
+    : grid_(resolution_m),
+      volume_(grid_.voxel_size * grid_.voxel_size * grid_.voxel_size) {}
 
 const std::vector<HashedCloud::Pos>& HashedCloud::points() const { return points_; }
 
@@ -103,12 +105,38 @@ void HashedCloud::addPoint(const Pos& pos, Mode mode) {
   }
 }
 
-void HashedCloud::removePoint(const Pos& pos) {
+void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase) {
   const auto idx = grid_.toIndex(pos);
   auto iter = lookup_.find(idx);
   if (iter == lookup_.end()) {
     return;
   }
+
+  for (const auto& pos : cloud.points()) {
+  }
+}
+
+float HashedCloud::intersection(const HashedCloud& other) const {
+  size_t num_equal = 0;
+  for (const auto& [idx, _] : lookup_) {
+    num_equal += other.lookup_.count(idx);
+  }
+
+  return num_equal * volume_;
+}
+
+float HashedCloud::iou(const HashedCloud& other) const {
+  if (lookup_.empty() && other.lookup_.empty()) {
+    return 0.0f;
+  }
+
+  size_t num_equal = 0;
+  for (const auto& [idx, _] : lookup_) {
+    num_equal += other.lookup_.count(idx);
+  }
+
+  size_t total = lookup_.size() + other.lookup_.size();
+  return static_cast<float>(num_equal) / (total - num_equal);
 }
 
 ObjectExtractor::Config::Config() : VerbosityConfig("[object_extractor] ") {}
@@ -152,11 +180,11 @@ void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
         getConnectedComponents(cloud.points(), config.cluster_tolerance);
     MLOG(2) << "found " << clusters.size() << " cluster(s) of label " << label;
     for (const auto& cluster : clusters) {
-      if (cluster.indices.size() < config.min_object_size) {
+      if (cluster.size() < config.min_object_size) {
         continue;
       }
 
-      // TODO(nathan) match cluster to current objects
+      auto object = std::make_unique<HashedCloud>(config.grid_resolution_m);
     }
   }
 
@@ -167,16 +195,14 @@ void ObjectExtractor::updatePoints(const ActiveWindowOutput& msg) {
   const auto& map = msg.map();
   const auto& tsdf = map.getTsdfLayer();
   for (auto& [label, cloud] : points_) {
-    for (const auto& pos : cloud.points()) {
+    cloud.erase([&tsdf, this](const HashedCloud::Pos& pos) -> bool {
       const auto voxel = tsdf.getVoxelPtr(pos);
       if (!voxel || voxel->weight < config.min_observation_weight) {
-        continue;
+        return false;
       }
 
-      if (voxel->distance > 0.0f) {
-        cloud.removePoint(pos);
-      }
-    }
+      return voxel->distance > 0.0f;
+    });
   }
 
   const auto& mesh = map.getMeshLayer();

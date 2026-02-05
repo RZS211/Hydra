@@ -137,9 +137,9 @@ BoundingBox fitBoxToFilteredMesh(const Mesh& mesh,
   return BoundingBox(adaptor, type);
 }
 
-std::vector<Cluster> getConnectedComponents(const Mesh::Positions& points,
-                                            float radius_m) {
-  std::vector<Cluster> clusters;
+std::vector<std::vector<size_t>> getConnectedComponents(const Mesh::Positions& points,
+                                                        float radius_m) {
+  std::vector<std::vector<size_t>> clusters;
   PointNeighborSearch search(points);
   std::vector<bool> seen(points.size(), false);
   for (size_t seed = 0; seed < points.size(); ++seed) {
@@ -155,8 +155,7 @@ std::vector<Cluster> getConnectedComponents(const Mesh::Positions& points,
       frontier.pop_front();
 
       const auto& pos = points[i];
-      cluster.indices.push_back(i);
-      cluster.centroid += pos;
+      cluster.push_back(i);
       const auto neighbors = search.pointsInRadius(pos, radius_m);
       for (const auto idx : neighbors) {
         if (seen[idx]) {
@@ -167,8 +166,6 @@ std::vector<Cluster> getConnectedComponents(const Mesh::Positions& points,
         seen[idx] = true;
       }
     }
-
-    cluster.centroid /= cluster.indices.size();
   }
 
   return clusters;
