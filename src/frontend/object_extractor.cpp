@@ -83,7 +83,7 @@ void HashedCloud::addPoint(const Pos& pos, Mode mode) {
   const auto idx = grid_.toIndex(pos);
   auto iter = lookup_.find(idx);
   if (iter == lookup_.end()) {
-    lookup_.emplace(idx, points_.size());
+    lookup_.emplace(idx, Entry{points_.size(), 1});
     points_.push_back(pos);
     return;
   }
@@ -288,7 +288,7 @@ void ObjectExtractor::updateGraph(uint64_t timestamp_ns, DynamicSceneGraph& grap
     attrs->is_active = true;
     attrs->semantic_label = info.label;
     attrs->bounding_box = BoundingBox(info.cloud->points(), config.bounding_box_type);
-    attrs->position = attrs->bounding_box.world_P_center;
+    attrs->position = attrs->bounding_box.world_P_center.cast<double>();
     // TODO(nathan) fill object with points
   }
 }
