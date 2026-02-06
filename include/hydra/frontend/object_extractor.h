@@ -60,16 +60,19 @@ struct HashedCloud {
 
   void addPoint(const Pos& pos, Mode mode = Mode::DISCARD);
 
-  void erase(const std::function<bool(const Pos&)>& should_erase,
-             std::set<size_t>* erased = nullptr);
-
   size_t size() const;
 
   float intersection(const HashedCloud& other) const;
 
   float iou(const HashedCloud& other) const;
 
+  void erase(const std::function<bool(const Pos&)>& should_erase,
+             std::set<size_t>* erased = nullptr);
+
  private:
+  void erase(const std::function<bool(const Pos&)>& should_erase,
+             std::set<size_t>& erased);
+
   const spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
   const float volume_;
   std::vector<Pos> points_;
@@ -93,6 +96,7 @@ class ObjectExtractor {
     float min_observation_weight = 1.0e-4f;
     size_t min_object_size = 30;
     float cluster_tolerance = 0.25f;
+    float min_intersection_volume = 0.1;
     spark_dsg::BoundingBox::Type bounding_box_type = spark_dsg::BoundingBox::Type::AABB;
     std::vector<Sink::Factory> sinks;
   } const config;
@@ -108,14 +112,17 @@ class ObjectExtractor {
 
   struct ObjectCloud {
     uint32_t label;
-    HashedCloud cloud;
+    HashedCloud::Ptr cloud;
   };
 
   Sink::List sinks_;
   std::set<uint32_t> labels_;
   spark_dsg::NodeSymbol next_node_id_;
   std::map<uint32_t, HashedCloud> points_;
-  std::map<spark_dsg::NodeId, HashedCloud::Ptr> objects_;
+  std::map<spark_dsg::NodeId, ObjectCloud> objects_;
+
+  std::vector<spark_dsg::NodeId> deleted_;
+  std::vector<spark_dsg::NodeId> archived_;
 };
 
 void declare_config(ObjectExtractor::Config& config);

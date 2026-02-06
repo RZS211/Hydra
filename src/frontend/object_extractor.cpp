@@ -65,11 +65,11 @@ inline std::string printLabels(const std::set<uint32_t>& labels) {
 
 }  // namespace
 
-using timing::ScopedTimer;
-
 using spark_dsg::BoundingBox;
 using spark_dsg::DynamicSceneGraph;
+using spark_dsg::ObjectNodeAttributes;
 using spatial_hash::IndexSet;
+using timing::ScopedTimer;
 
 HashedCloud::HashedCloud(float resolution_m)
     : grid_(resolution_m),
@@ -105,15 +105,39 @@ void HashedCloud::addPoint(const Pos& pos, Mode mode) {
   }
 }
 
-void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase) {
-  const auto idx = grid_.toIndex(pos);
-  auto iter = lookup_.find(idx);
-  if (iter == lookup_.end()) {
-    return;
+void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase,
+                        std::set<size_t>* erased) {
+  if (erased) {
+    erase(should_erase, *erased);
   }
 
-  for (const auto& pos : cloud.points()) {
+  std::set<size_t> to_erase;
+  erase(should_erase, to_erase);
+}
+
+void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase,
+                        std::set<size_t>& erased) {
+  spatial_hash::IndexSet to_clear;
+  for (const auto& [idx, info] : lookup_) {
+    const auto& pos = points_[info.index];
+    if (!should_erase(pos)) {
+      continue;
+    }
+
+    to_clear.insert(idx);
+    erased.insert(info.index);
   }
+
+  for (const auto& idx : to_clear) {
+    lookup_.erase(idx);
+  }
+
+  std::vector<Pos> new_points;
+  for (size_t i = 0; i < points_.size(); ++i) {
+    new_points.push_back(points_[i]);
+  }
+
+  points_ = std::move(new_points);
 }
 
 float HashedCloud::intersection(const HashedCloud& other) const {
@@ -184,7 +208,24 @@ void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
         continue;
       }
 
-      auto object = std::make_unique<HashedCloud>(config.grid_resolution_m);
+      bool matched = false;
+      auto curr_cloud = std::make_unique<HashedCloud>(config.grid_resolution_m);
+      for (const auto& [_, info] : objects_) {
+        if (info.label != label) {
+          continue;
+        }
+
+        if (info.cloud->intersection(*curr_cloud) > config.min_intersection_volume) {
+          matched = true;
+          // TODO(nathan) merge clouds
+          break;
+        }
+      }
+
+      if (!matched) {
+        objects_.emplace(next_node_id_, ObjectCloud{label, std::move(curr_cloud)});
+        ++next_node_id_;
+      }
     }
   }
 
@@ -227,166 +268,29 @@ void ObjectExtractor::updatePoints(const ActiveWindowOutput& msg) {
   }
 }
 
-void ObjectExtractor::updateGraph(uint64_t timestamp_ns, DynamicSceneGraph& graph) {}
-
-/*
-void ObjectExtractor::updateOldNodes(const kimera_pgmo::MeshOffsetInfo& offsets,
-                                     DynamicSceneGraph& graph) {
-  for (auto& [label, label_nodes] : active_nodes_) {
-    auto iter = label_nodes.begin();
-    while (iter != label_nodes.end()) {
-      const auto node_id = *iter;
-      auto& attrs = graph.getNode(node_id).attributes<ObjectNodeAttributes>();
-
-      // remap and prune mesh connections
-      VLOG(20) << "Updating node " << NodeSymbol(node_id).str() << " with connections "
-               << attrs.mesh_connections;
-      kimera_pgmo::MeshOffsetInfo::RemapStats stats;
-      offsets.remapVertexIndices(attrs.mesh_connections, &stats);
-      VLOG(20) << "After update: " << attrs.mesh_connections << std::boolalpha
-               << " (active: " << !stats.all_archived << ")";
-      if (attrs.mesh_connections.size() < config.clustering.min_cluster_size) {
-        graph.removeNode(node_id);
-        iter = label_nodes.erase(iter);
-        continue;
-      }
-
-      attrs.is_active = !stats.all_archived;
-      if (!attrs.is_active) {
-        iter = label_nodes.erase(iter);
-      } else {
-        ++iter;
-      }
-    }
+void ObjectExtractor::updateGraph(uint64_t timestamp_ns, DynamicSceneGraph& graph) {
+  ScopedTimer timer("frontend/object_graph_update", timestamp_ns, true, 1, false);
+  for (const auto node : deleted_) {
+    graph.removeNode(node);
   }
 
-  for (const auto& [label, label_nodes] : active_nodes_) {
-    VLOG(10) << "Active nodes for label " << label << ": "
-             << displayNodeSymbolContainer(label_nodes);
+  for (const auto node_id : archived_) {
+    graph.getNode(node_id).attributes().is_active = false;
+  }
+
+  deleted_.clear();
+  archived_.clear();
+
+  for (const auto& [node_id, info] : objects_) {
+    auto attrs = std::make_unique<ObjectNodeAttributes>();
+    graph.addOrUpdateNode(config.layer_id, node_id, std::move(attrs));
+    attrs->last_update_time_ns = timestamp_ns;
+    attrs->is_active = true;
+    attrs->semantic_label = info.label;
+    attrs->bounding_box = BoundingBox(info.cloud->points(), config.bounding_box_type);
+    attrs->position = attrs->bounding_box.world_P_center;
+    // TODO(nathan) fill object with points
   }
 }
-
-void ObjectExtractor::updateGraph(uint64_t timestamp_ns,
-                                  const kimera_pgmo::MeshOffsetInfo& offsets,
-                                  const LabelClusters& clusters,
-                                  DynamicSceneGraph& graph) {
-  ScopedTimer timer(config.timer_namespace + "_graph_update", timestamp_ns);
-  updateOldNodes(offsets, graph);
-  if (!graph.hasMesh()) {
-    LOG(ERROR) << "Unable to update graph without mesh!";
-    return;
-  }
-
-  for (auto&& [label, clusters_for_label] : clusters) {
-    for (const auto& cluster : clusters_for_label) {
-      bool matches_prev_node = false;
-      std::vector<NodeId> nodes_not_in_graph;
-      for (const auto& prev_node_id : active_nodes_.at(label)) {
-        const auto& prev_node = graph.getNode(prev_node_id);
-        if (nodesMatch(cluster, prev_node)) {
-          updateNodeInGraph(graph, cluster, prev_node, timestamp_ns);
-          matches_prev_node = true;
-          break;
-        }
-      }
-
-      if (!matches_prev_node) {
-        addNodeToGraph(graph, cluster, label, timestamp_ns);
-      }
-
-      mergeActiveNodes(graph, label);
-    }
-  }
-}
-
-void ObjectExtractor::mergeActiveNodes(DynamicSceneGraph& graph, uint32_t label) {
-  std::set<NodeId> merged_nodes;
-
-  auto& curr_active = active_nodes_.at(label);
-  for (const auto& node_id : curr_active) {
-    if (merged_nodes.count(node_id)) {
-      continue;
-    }
-    const auto& node = graph.getNode(node_id);
-
-    std::list<NodeId> to_merge;
-    for (const auto& other_id : curr_active) {
-      if (node_id == other_id) {
-        continue;
-      }
-
-      if (merged_nodes.count(other_id)) {
-        continue;
-      }
-
-      const auto& other = graph.getNode(other_id);
-      if (nodesMatch(node, other) || nodesMatch(other, node)) {
-        to_merge.push_back(other_id);
-      }
-    }
-
-    auto& attrs = node.attributes<ObjectNodeAttributes>();
-    for (const auto& other_id : to_merge) {
-      const auto& other = graph.getNode(other_id);
-      auto& other_attrs = other.attributes<ObjectNodeAttributes>();
-      mergeList(attrs.mesh_connections, other_attrs.mesh_connections);
-      graph.removeNode(other_id);
-      merged_nodes.insert(other_id);
-    }
-
-    if (!to_merge.empty()) {
-      updateObjectGeometry(*graph.mesh(), attrs);
-    }
-  }
-
-  for (const auto& node_id : merged_nodes) {
-    curr_active.erase(node_id);
-  }
-}
-
-std::unordered_set<NodeId> ObjectExtractor::getActiveNodes() const {
-  std::unordered_set<NodeId> active_nodes;
-  for (const auto& label_nodes_pair : active_nodes_) {
-    active_nodes.insert(label_nodes_pair.second.begin(), label_nodes_pair.second.end());
-  }
-  return active_nodes;
-}
-
-void ObjectExtractor::updateNodeInGraph(DynamicSceneGraph& graph,
-                                        const Cluster& cluster,
-                                        const SceneGraphNode& node,
-                                        uint64_t timestamp) {
-  auto& attrs = node.attributes<ObjectNodeAttributes>();
-  attrs.last_update_time_ns = timestamp;
-  attrs.is_active = true;
-
-  mergeList(attrs.mesh_connections, cluster.indices);
-  updateObjectGeometry(*graph.mesh(), attrs);
-}
-
-void ObjectExtractor::addNodeToGraph(DynamicSceneGraph& graph,
-                                     const Cluster& cluster,
-                                     uint32_t label,
-                                     uint64_t timestamp) {
-  if (cluster.indices.empty()) {
-    LOG(ERROR) << "Encountered empty cluster with label" << static_cast<int>(label)
-               << " @ " << timestamp << "[ns]";
-    return;
-  }
-
-  auto attrs = std::make_unique<ObjectNodeAttributes>();
-  attrs->last_update_time_ns = timestamp;
-  attrs->is_active = true;
-  attrs->semantic_label = label;
-  attrs->mesh_connections.insert(
-      attrs->mesh_connections.begin(), cluster.indices.begin(), cluster.indices.end());
-
-  updateObjectGeometry(*graph.mesh(), *attrs, nullptr, config.bounding_box_type);
-
-  graph.emplaceNode(config.layer_id, next_node_id_, std::move(attrs));
-  active_nodes_.at(label).insert(next_node_id_);
-  ++next_node_id_;
-}
-*/
 
 }  // namespace hydra
