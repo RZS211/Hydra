@@ -37,23 +37,11 @@
 
 namespace hydra {
 
-void PrintTo(const Cluster& cluster, std::ostream* os) {
-  *os << "[";
-  auto iter = cluster.indices.begin();
-  while (iter != cluster.indices.end()) {
-    *os << *iter;
-    ++iter;
-    if (iter != cluster.indices.end()) {
-      *os << ", ";
-    }
-  }
-  *os << "]";
-}
+using ClusterResult = std::vector<std::vector<size_t>>;
 
 namespace {
 
-void compareClusters(const std::vector<Cluster>& expected,
-                     const std::vector<Cluster>& result) {
+void compareClusters(const ClusterResult& expected, const ClusterResult& result) {
   EXPECT_EQ(expected.size(), result.size());
   if (expected.size() != result.size()) {
     return;
@@ -62,10 +50,10 @@ void compareClusters(const std::vector<Cluster>& expected,
   std::set<size_t> seen_expected;
   for (const auto& cluster : result) {
     std::optional<size_t> match_idx;
-    std::vector<size_t> result_indices = cluster.indices;
+    std::vector<size_t> result_indices = cluster;
     std::sort(result_indices.begin(), result_indices.end());
     for (size_t i = 0; i < expected.size(); ++i) {
-      std::vector<size_t> expected_indices = expected[i].indices;
+      std::vector<size_t> expected_indices = expected[i];
       std::sort(expected_indices.begin(), expected_indices.end());
       if (result_indices == expected_indices) {
         match_idx = i;
@@ -78,9 +66,6 @@ void compareClusters(const std::vector<Cluster>& expected,
       FAIL() << "Could not find match for " << ::testing::PrintToString(cluster)
              << " vs. expected " << ::testing::PrintToString(expected);
     }
-
-    EXPECT_NEAR(
-        (cluster.centroid - expected[*match_idx].centroid).norm(), 0.0f, 1.0e-6f);
   }
 
   EXPECT_EQ(seen_expected.size(), expected.size())
@@ -111,15 +96,13 @@ TEST(MeshUtilities, SegmentSplit) {
   points.push_back(seed1 - Eigen::Vector3f(0.0, 0.0, 0.25));
 
   {  // separate points
-    std::vector<Cluster> expected{{seed0, {0, 2, 4, 6, 8, 10, 12}},
-                                  {seed1, {1, 3, 5, 7, 9, 11, 13}}};
+    ClusterResult expected{{0, 2, 4, 6, 8, 10, 12}, {1, 3, 5, 7, 9, 11, 13}};
     const auto results = getConnectedComponents(points, 0.3);
     compareClusters(expected, results);
   }
 
   {  // all points
-    std::vector<Cluster> expected{
-        {0.5f * (seed0 + seed1), {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}}};
+    ClusterResult expected{{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}};
     const auto results = getConnectedComponents(points, 3.0);
     compareClusters(expected, results);
   }

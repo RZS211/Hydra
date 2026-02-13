@@ -283,13 +283,13 @@ void ObjectExtractor::updateGraph(uint64_t timestamp_ns, DynamicSceneGraph& grap
 
   for (const auto& [node_id, info] : objects_) {
     auto attrs = std::make_unique<ObjectNodeAttributes>();
-    graph.addOrUpdateNode(config.layer_id, node_id, std::move(attrs));
     attrs->last_update_time_ns = timestamp_ns;
     attrs->is_active = true;
     attrs->semantic_label = info.label;
     attrs->bounding_box = BoundingBox(info.cloud->points(), config.bounding_box_type);
     attrs->position = attrs->bounding_box.world_P_center.cast<double>();
     // TODO(nathan) fill object with points
+    graph.addOrUpdateNode(config.layer_id, node_id, std::move(attrs));
   }
 }
 

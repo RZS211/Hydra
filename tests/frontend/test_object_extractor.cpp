@@ -38,10 +38,7 @@
 
 namespace hydra {
 
-using spark_dsg::BoundingBox;
-using spark_dsg::NodeId;
-using spark_dsg::DynamicSceneGraph;
-using spark_dsg::ObjectNodeAttributes;
+using namespace spark_dsg;
 
 namespace {
 
@@ -51,147 +48,154 @@ struct NodeResult {
   bool is_active = true;
 };
 
-void checkBoundingBox(const BoundingBox& expected,
-                      const BoundingBox& result,
-                      double tolerance = 1.0e-6f) {
-  EXPECT_NEAR(expected.dimensions.x(), result.dimensions.x(), tolerance);
-  EXPECT_NEAR(expected.dimensions.y(), result.dimensions.y(), tolerance);
-  EXPECT_NEAR(expected.dimensions.z(), result.dimensions.z(), tolerance);
-  EXPECT_NEAR(expected.world_P_center.x(), result.world_P_center.x(), tolerance);
-  EXPECT_NEAR(expected.world_P_center.y(), result.world_P_center.y(), tolerance);
-  EXPECT_NEAR(expected.world_P_center.z(), result.world_P_center.z(), tolerance);
-}
+bool checkGraph(const DynamicSceneGraph& graph,
+                const std::map<NodeId, NodeResult>& expected_nodes,
+                float tolerance = 1.0e-4f) {
+  const auto& layer = graph.getLayer(DsgLayers::OBJECTS);
+  EXPECT_EQ(layer.numNodes(), expected_nodes.size());
 
-bool checkNode(const DynamicSceneGraph& graph,
-               NodeId node_id,
-               const NodeResult& expected) {
-  const auto node = graph.findNode(node_id);
-  if (!node) {
-    return false;
+  bool all_present = true;
+  for (const auto& [node_id, expected] : expected_nodes) {
+    SCOPED_TRACE("Object " + NodeSymbol(node_id).str());
+    const auto node = layer.findNode(node_id);
+    if (!node) {
+      all_present = false;
+      continue;
+    }
+
+    auto& result = node->attributes<ObjectNodeAttributes>();
+    const auto& result_bbox = result.bounding_box;
+    EXPECT_EQ(expected.label, result.semantic_label);
+    EXPECT_EQ(expected.is_active, result.is_active);
+    EXPECT_NEAR(expected.bbox.dimensions.x(), result_bbox.dimensions.x(), tolerance);
+    EXPECT_NEAR(expected.bbox.dimensions.y(), result_bbox.dimensions.y(), tolerance);
+    EXPECT_NEAR(expected.bbox.dimensions.z(), result_bbox.dimensions.z(), tolerance);
+    EXPECT_NEAR(
+        expected.bbox.world_P_center.x(), result_bbox.world_P_center.x(), tolerance);
+    EXPECT_NEAR(
+        expected.bbox.world_P_center.y(), result_bbox.world_P_center.y(), tolerance);
+    EXPECT_NEAR(
+        expected.bbox.world_P_center.z(), result_bbox.world_P_center.z(), tolerance);
+    EXPECT_NEAR(expected.bbox.world_P_center.x(), result.position.x(), tolerance);
+    EXPECT_NEAR(expected.bbox.world_P_center.y(), result.position.y(), tolerance);
+    EXPECT_NEAR(expected.bbox.world_P_center.z(), result.position.z(), tolerance);
   }
 
-  auto& result = node->attributes<ObjectNodeAttributes>();
-  EXPECT_EQ(expected.label, result.semantic_label);
-  checkBoundingBox(expected.bbox, result.bounding_box);
-  EXPECT_EQ(expected.is_active, result.is_active);
-  return true;
+  return all_present;
 }
+
+class MapFixture {
+ public:
+  MapFixture() : map_(std::make_shared<VolumetricMap>(VolumetricMap::Config{})) {}
+
+  void addPoints(uint32_t label, Eigen::Vector3f centroid, Eigen::Vector3f dims) {
+    auto& mesh = map_->getMeshLayer();
+    BoundingBox box(dims, centroid);
+    const auto points = box.corners();
+    for (const auto& point : points) {
+      const auto block_idx = mesh.getBlockIndex(point);
+      if (!mesh.hasBlock(block_idx)) {
+        mesh.allocateBlock(block_idx, true, false);
+      }
+
+      auto& block = mesh.getBlock(block_idx);
+      block.points.push_back(point);
+      block.labels.push_back(label);
+    }
+  }
+
+  ActiveWindowOutput makeMsg() {
+    ActiveWindowOutput msg;
+    msg.timestamp_ns = 0;
+    msg.world_t_body = Eigen::Vector3d::Zero();
+    msg.world_R_body = Eigen::Quaterniond::Identity();
+    msg.setMap(map_);
+    return msg;
+  }
+
+ private:
+  std::shared_ptr<VolumetricMap> map_;
+};
 
 }  // namespace
 
-/*G
-TEST(ObjectExtractor, TestClustering) {
+TEST(ObjectExtractor, Clustering) {
+  const auto dims = Eigen::Vector3f::Constant(0.1);
+
+  SceneGraph graph;
   ObjectExtractor::Config config;
-  config.clustering.min_cluster_size = 4;
-  ObjectExtractor segmenter(config, {1, 2});
+  config.min_object_size = 4;
+  ObjectExtractor extractor(config, {1, 2});
 
-  MeshDelta delta({0, 0, 0});
-  addPoints(delta, 1, {1, 2, 3}, Eigen::Vector3f::Constant(0.1));
-  addPoints(delta, 2, {4, 5, 6}, Eigen::Vector3f::Constant(0.1));
+  MapFixture fixture;
+  fixture.addPoints(1, {1, 2, 3}, dims);
+  fixture.addPoints(2, {4, 5, 6}, dims);
+  extractor.detect(fixture.makeMsg());
+  extractor.updateGraph(0, graph);
 
-  const auto clusters = segmenter.detect(0, delta, {0, 0, 0});
-  ASSERT_EQ(clusters.size(), 2u);
+  const std::map<NodeId, NodeResult> expected{
+      {"O0"_id, {1, BoundingBox(dims, {1, 2, 3}), true}},
+      {"O1"_id, {2, BoundingBox(dims, {4, 5, 6}), true}}};
+  checkGraph(graph, expected);
 }
 
-TEST(ObjectExtractor, TestIndicesRemapping) {
-  Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
-  const BoundingBox b1(dims, Eigen::Vector3f(1, 2, 3));
-  const BoundingBox b2(dims, Eigen::Vector3f(4, 5, 6));
+TEST(ObjectExtractor, DeletedObject) {
+  const auto dims = Eigen::Vector3f::Constant(0.1);
 
+  SceneGraph graph;
   ObjectExtractor::Config config;
-  config.clustering.min_cluster_size = 4;
-  ObjectExtractor segmenter(config, {1, 2});
-
-  DynamicSceneGraph graph;
-  kimera_pgmo::MeshOffsetInfo offsets;
-  graph.setMesh(std::make_shared<spark_dsg::Mesh>());
-
-  {  // original objects
-    MeshDelta delta({0, 0, 0});
-    addPoints(delta, 1, {1, 2, 3}, dims);
-    addPoints(delta, 2, {4, 5, 6}, dims);
-    stepSegmenter(delta, offsets, segmenter, graph);
-
-    std::unordered_set<NodeId> active{"O0"_id, "O1"_id};
-    EXPECT_EQ(active, segmenter.getActiveNodes());
-
-    const std::map<NodeId, NodeResult> expected_nodes{
-        {"O0"_id, {1, {0, 1, 2, 3, 4, 5, 6, 7}, b1}},
-        {"O1"_id, {2, {8, 9, 10, 11, 12, 13, 14, 15}, b2}},
-    };
-
-    for (const auto& [node_id, expected] : expected_nodes) {
-      SCOPED_TRACE("Object " + NodeSymbol(node_id).str());
-      EXPECT_TRUE(checkNode(graph, node_id, expected));
-    }
-  }
-
-  {  // swapped objects
-    std::map<size_t, size_t> remap;
-    for (size_t i = 0; i < 8; ++i) {
-      // two corner sets are swapped in order
-      remap[i] = i + 8;
-      remap[i + 8] = i;
-    }
-
-    const auto tracking = MeshDelta::TrackingInfo::with_remap(0, 16, 0, remap);
-    MeshDelta delta(tracking);
-    addPoints(delta, 2, {4, 5, 6}, Eigen::Vector3f::Constant(0.1));
-    addPoints(delta, 1, {1, 2, 3}, Eigen::Vector3f::Constant(0.1));
-    stepSegmenter(delta, offsets, segmenter, graph);
-
-    const std::map<NodeId, NodeResult> expected_nodes{
-        {"O0"_id, {1, {8, 9, 10, 11, 12, 13, 14, 15}, b1}},
-        {"O1"_id, {2, {0, 1, 2, 3, 4, 5, 6, 7}, b2}},
-    };
-
-    for (const auto& [node_id, expected] : expected_nodes) {
-      SCOPED_TRACE("Object " + NodeSymbol(node_id).str());
-      EXPECT_TRUE(checkNode(graph, node_id, expected));
-    }
-  }
-}
-
-TEST(ObjectExtractor, TestDeletedObject) {
-  Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
-  const spark_dsg::BoundingBox b2(dims, Eigen::Vector3f(4, 5, 6));
-
-  ObjectExtractor::Config config;
-  config.clustering.min_cluster_size = 4;
-  ObjectExtractor segmenter(config, {1, 2});
-
-  DynamicSceneGraph graph;
-  kimera_pgmo::MeshOffsetInfo offsets;
-  graph.setMesh(std::make_shared<spark_dsg::Mesh>());
+  config.min_object_size = 4;
+  ObjectExtractor extractor(config, {1, 2});
 
   {  // setup original objects
-    MeshDelta delta({0, 0, 0});
-    addPoints(delta, 1, {1, 2, 3}, dims);
-    addPoints(delta, 2, {4, 5, 6}, dims);
-    stepSegmenter(delta, offsets, segmenter, graph);
-  }
-
-  {  // delete object one
-    std::map<size_t, size_t> remap;
-    for (size_t i = 0; i < 8; ++i) {
-      // previous object gets moved up
-      remap[i + 8] = i;
-    }
-
-    const auto tracking = MeshDelta::TrackingInfo::with_remap(0, 16, 0, remap);
-    MeshDelta delta(tracking);
-    addPoints(delta, 2, {4, 5, 6}, dims);
-    stepSegmenter(delta, offsets, segmenter, graph);
+    MapFixture fixture;
+    fixture.addPoints(1, {1, 2, 3}, Eigen::Vector3f::Constant(0.1));
+    fixture.addPoints(2, {4, 5, 6}, Eigen::Vector3f::Constant(0.1));
+    extractor.detect(fixture.makeMsg());
+    extractor.updateGraph(0, graph);
 
     const std::map<NodeId, NodeResult> expected{
-        {"O1"_id, {2, {0, 1, 2, 3, 4, 5, 6, 7}, b2}}};
-    for (const auto& [node_id, node] : expected) {
-      SCOPED_TRACE("Object " + NodeSymbol(node_id).str());
-      EXPECT_TRUE(checkNode(graph, node_id, node));
-    }
+        {"O0"_id, {1, BoundingBox(dims, {1, 2, 3}), true}},
+        {"O1"_id, {2, BoundingBox(dims, {4, 5, 6}), true}},
+    };
+    checkGraph(graph, expected);
+  }
+
+  {  // delete first object
+    MapFixture fixture;
+    fixture.addPoints(2, {4, 5, 6}, Eigen::Vector3f::Constant(0.1));
+    extractor.detect(fixture.makeMsg());
+    extractor.updateGraph(0, graph);
+
+    const std::map<NodeId, NodeResult> expected{
+        {"O1"_id, {2, BoundingBox(dims, {4, 5, 6}), true}},
+    };
+    checkGraph(graph, expected);
+  }
+
+  {  // delete second object
+    MapFixture fixture;
+    fixture.addPoints(1, {1, 2, 3}, Eigen::Vector3f::Constant(0.1));
+    extractor.detect(fixture.makeMsg());
+    extractor.updateGraph(0, graph);
+
+    const std::map<NodeId, NodeResult> expected{
+        {"O2"_id, {1, BoundingBox(dims, {1, 2, 3}), true}},
+    };
+    checkGraph(graph, expected);
+  }
+
+  {  // delete all objects
+    MapFixture fixture;
+    extractor.detect(fixture.makeMsg());
+    extractor.updateGraph(0, graph);
+
+    const std::map<NodeId, NodeResult> expected{};
+    checkGraph(graph, expected);
   }
 }
 
+/*
 TEST(ObjectExtractor, TestArchivedObject) {
   Eigen::Vector3f dims = Eigen::Vector3f::Constant(0.1);
   const BoundingBox b1(dims, Eigen::Vector3f(1, 2, 3));
