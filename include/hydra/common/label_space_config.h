@@ -45,6 +45,7 @@ struct LabelSpaceConfig {
   std::set<uint32_t> invalid_labels;
   std::set<uint32_t> object_labels;
   std::set<uint32_t> surface_places_labels;
+  std::set<uint32_t> ground_labels = {};
   std::filesystem::path colormap_filepath;
   std::filesystem::path label_remap_filepath;
 };

@@ -55,7 +55,7 @@ void declare_config(ActiveWindowModule::Config& config) {
 
 ActiveWindowModule::Config::Config(bool with_semantics, bool with_tracking)
     : max_input_queue_size(0),
-      volumetric_map({0.1, 16, 0.3, with_semantics, with_tracking}) {}
+      volumetric_map({0.1, 16, 0.3, 0.0f, with_semantics, with_tracking}) {}
 
 ActiveWindowModule::ActiveWindowModule(const Config& config,
                                        const OutputQueue::Ptr& queue)

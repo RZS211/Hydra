@@ -116,7 +116,8 @@ void declare_config(ProjectiveIntegrator::Config& config) {
 ProjectiveIntegrator::ProjectiveIntegrator(const ProjectiveIntegrator::Config& config)
     : config(config::checkValid(config)),
       interpolator_(config.interpolation_method.create()),
-      semantic_integrator_(config.semantic_integrator.create()) {}
+      semantic_integrator_(config.semantic_integrator.create()),
+      ground_labels_(GlobalInfo::instance().getLabelSpaceConfig().ground_labels) {}
 
 void ProjectiveIntegrator::updateMap(const InputData& data,
                                      VolumetricMap& map,
@@ -238,6 +239,33 @@ Measurement ProjectiveIntegrator::getVoxelMeasurement(const MapConfig& map_confi
   // Get associated semantic label if applicable and check if it can be integrated
   if (!computeLabel(map_config, data, integration_mask, measurement)) {
     return measurement;
+  }
+
+  // NOTE(hlim) Set adaptive truncation distance for better mesh generation.
+  // Especially, this option considers ground points from LiDAR measurement.
+  if (map_config.truncation_distance_for_ground != 0.0f &&
+      isGroundLabel(measurement.label)) {
+    float ground_truncation_distance;
+    if (map_config.truncation_distance_for_ground > 0) {
+      ground_truncation_distance = map_config.truncation_distance_for_ground;
+    } else {
+      // `truncation_distance_for_ground` is used as a ratio
+      // of the actual truncation distance
+      ground_truncation_distance =
+          -map_config.truncation_distance_for_ground * map_config.truncation_distance;
+    }
+
+    // Re-check SDF against the adaptive truncation distance: if the voxel was
+    // rejected because sdf < -truncation_distance but is valid under the wider
+    // ground truncation, re-clamp it.
+    if (measurement.sdf < -ground_truncation_distance) {
+      if (!measurement.within_extra_integration_distance) {
+        return measurement;
+      }
+      measurement.sdf = -ground_truncation_distance;
+    }
+    // Clamp on the positive side to the adaptive truncation distance
+    measurement.sdf = std::min(ground_truncation_distance, measurement.sdf);
   }
 
   // Filter measurements outside truncation band by label
@@ -402,6 +430,12 @@ bool ProjectiveIntegrator::computeLabel(const MapConfig& map_config,
   }
 
   return true;
+}
+
+bool ProjectiveIntegrator::isGroundLabel(const uint32_t label) const {
+  // NOTE(hlim): If ground_labels_ are not provided,
+  // the adaptive mode will not be applied.
+  return ground_labels_.find(label) != ground_labels_.end();
 }
 
 }  // namespace hydra

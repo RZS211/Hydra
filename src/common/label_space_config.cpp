@@ -47,6 +47,7 @@ void declare_config(LabelSpaceConfig& config) {
   field(config.invalid_labels, "invalid_labels");
   field(config.object_labels, "object_labels");
   field(config.surface_places_labels, "surface_places_labels");
+  field(config.ground_labels, "ground_labels");
   field<Path::Absolute>(config.colormap_filepath, "semantic_colormap_file");
   field<Path::Absolute>(config.label_remap_filepath, "semantic_label_remap_filepath");
 }

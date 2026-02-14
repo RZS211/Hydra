@@ -217,9 +217,18 @@ class ProjectiveIntegrator {
                             const cv::Mat& integration_mask,
                             VoxelMeasurement& measurement) const;
 
+  /**
+   * @brief Check if the given label corresponds to a ground point.
+   * @param label The label associated with the voxel or point.
+   * @return True if the label is part of the predefined ground labels; false otherwise.
+   */
+  bool isGroundLabel(const uint32_t label) const;
+
  protected:
   const std::unique_ptr<const ProjectionInterpolator> interpolator_;
   const SemanticIntegratorPtr semantic_integrator_;
+
+  const std::set<uint32_t> ground_labels_;
 };
 
 void declare_config(ProjectiveIntegrator::Config& config);
