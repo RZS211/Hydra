@@ -67,100 +67,24 @@ inline std::string printLabels(const std::set<uint32_t>& labels) {
 
 using spark_dsg::BoundingBox;
 using spark_dsg::DynamicSceneGraph;
+using spark_dsg::NodeSymbol;
 using spark_dsg::ObjectNodeAttributes;
 using spatial_hash::IndexSet;
 using timing::ScopedTimer;
 
-HashedCloud::HashedCloud(float resolution_m)
-    : grid_(resolution_m),
-      volume_(grid_.voxel_size * grid_.voxel_size * grid_.voxel_size) {}
+using PosMap = spatial_hash::IndexHashMap<Eigen::Vector3f>;
 
-const std::vector<HashedCloud::Pos>& HashedCloud::points() const { return points_; }
-
-size_t HashedCloud::size() const { return points_.size(); }
-
-void HashedCloud::addPoint(const Pos& pos, Mode mode) {
-  const auto idx = grid_.toIndex(pos);
-  auto iter = lookup_.find(idx);
-  if (iter == lookup_.end()) {
-    lookup_.emplace(idx, Entry{points_.size(), 1});
-    points_.push_back(pos);
-    return;
-  }
-
-  float ratio;
-  switch (mode) {
-    case Mode::OVERRIDE:
-      points_[iter->second.index] = pos;
-      break;
-    case Mode::MERGE:
-      ratio = 1.0 / iter->second.count;
-      points_[iter->second.index] =
-          (1.0f - ratio) * points_[iter->second.index] + ratio * pos;
-      iter->second.count++;
-      break;
-    case Mode::DISCARD:
-    default:
-      return;
-  }
-}
-
-void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase,
-                        std::set<size_t>* erased) {
-  if (erased) {
-    erase(should_erase, *erased);
-  }
-
-  std::set<size_t> to_erase;
-  erase(should_erase, to_erase);
-}
-
-void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase,
-                        std::set<size_t>& erased) {
-  spatial_hash::IndexSet to_clear;
-  for (const auto& [idx, info] : lookup_) {
-    const auto& pos = points_[info.index];
-    if (!should_erase(pos)) {
-      continue;
-    }
-
-    to_clear.insert(idx);
-    erased.insert(info.index);
-  }
-
-  for (const auto& idx : to_clear) {
-    lookup_.erase(idx);
-  }
-
-  std::vector<Pos> new_points;
-  for (size_t i = 0; i < points_.size(); ++i) {
-    new_points.push_back(points_[i]);
-  }
-
-  points_ = std::move(new_points);
-}
-
-float HashedCloud::intersection(const HashedCloud& other) const {
-  size_t num_equal = 0;
-  for (const auto& [idx, _] : lookup_) {
-    num_equal += other.lookup_.count(idx);
-  }
-
-  return num_equal * volume_;
-}
-
-float HashedCloud::iou(const HashedCloud& other) const {
-  if (lookup_.empty() && other.lookup_.empty()) {
+float ObjectExtractor::ObjectInfo::intersection(const PosMap& points) const {
+  if (active.empty() && frozen.empty()) {
     return 0.0f;
   }
 
   size_t num_equal = 0;
-  for (const auto& [idx, _] : lookup_) {
-    num_equal += other.lookup_.count(idx);
+  for (const auto& [idx, _] : points) {
+    num_equal += active.count(idx) || frozen.count(idx);
   }
 
-  size_t total = lookup_.size() + other.lookup_.size();
-  return static_cast<float>(num_equal) / (total - num_equal);
+  return static_cast<float>(num_equal) / (active.size() + frozen.size());
 }
 
 ObjectExtractor::Config::Config() : VerbosityConfig("[object_extractor] ") {}
@@ -184,6 +108,7 @@ void declare_config(ObjectExtractor::Config& config) {
 
 ObjectExtractor::ObjectExtractor(const Config& config, const std::set<uint32_t>& labels)
     : config(config::checkValid(config)),
+      grid_(config.grid_resolution_m),
       sinks_(Sink::instantiate(config.sinks)),
       labels_(labels),
       next_node_id_('O', 0) {
@@ -200,8 +125,7 @@ void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
       continue;
     }
 
-    const auto clusters =
-        getConnectedComponents(cloud.points(), config.cluster_tolerance);
+    const auto clusters = getConnectedComponents(cloud, config.cluster_tolerance);
     MLOG(2) << "found " << clusters.size() << " cluster(s) of label " << label;
     for (const auto& cluster : clusters) {
       if (cluster.size() < config.min_object_size) {
@@ -209,13 +133,21 @@ void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
       }
 
       bool matched = false;
-      auto curr_cloud = std::make_unique<HashedCloud>(config.grid_resolution_m);
-      for (const auto& [_, info] : objects_) {
+      spatial_hash::IndexHashMap<Point> curr_cloud;
+      for (const auto idx : cluster) {
+        const auto pos = cloud[idx];
+        curr_cloud.emplace(grid_.toIndex(pos), pos);
+      }
+
+      for (const auto& [node_id, info] : objects_) {
         if (info.label != label) {
           continue;
         }
 
-        if (info.cloud->intersection(*curr_cloud) > config.min_intersection_volume) {
+        const auto intersection = info.intersection(curr_cloud);
+        MLOG(3) << "Intersection with node " << NodeSymbol(node_id).str() << ": "
+                << intersection;
+        if (intersection > config.min_intersection_volume) {
           matched = true;
           // TODO(nathan) merge clouds
           break;
@@ -223,7 +155,7 @@ void ObjectExtractor::detect(const ActiveWindowOutput& msg) {
       }
 
       if (!matched) {
-        objects_.emplace(next_node_id_, ObjectCloud{label, std::move(curr_cloud)});
+        objects_.emplace(next_node_id_, ObjectInfo{label, std::move(curr_cloud), {}});
         ++next_node_id_;
       }
     }

@@ -33,65 +33,51 @@
  * purposes notwithstanding any copyright notation herein.
  * -------------------------------------------------------------------------- */
 #pragma once
-#include <spark_dsg/dynamic_scene_graph.h>
-#include <spark_dsg/node_attributes.h>
+#include <spark_dsg/bounding_box.h>
 #include <spatial_hash/grid.h>
+#include <spatial_hash/hash.h>
 
-#include "hydra/active_window/active_window_output.h"
-#include "hydra/common/output_sink.h"
-#include "hydra/utils/hashed_cloud.h"
-#include "hydra/utils/logging.h"
+#include <memory>
 
 namespace hydra {
 
-class ObjectExtractor {
- public:
-  using Sink = OutputSink<const ActiveWindowOutput&>;
-  struct Config : VerbosityConfig {
-    Config();
+struct HashedCloud : spark_dsg::BoundingBox::PointAdaptor {
+  using Ptr = std::unique_ptr<HashedCloud>;
+  using Pos = Eigen::Vector3f;
+  using PosMap = spatial_hash::IndexHashMap<Pos>;
 
-    std::string layer_id = spark_dsg::DsgLayers::OBJECTS;
-    float grid_resolution_m = 0.05f;
-    bool clear_freespace = true;
-    float min_observation_weight = 1.0e-4f;
-    size_t min_object_size = 30;
-    float cluster_tolerance = 0.25f;
-    float min_intersection_volume = 0.1;
-    spark_dsg::BoundingBox::Type bounding_box_type = spark_dsg::BoundingBox::Type::AABB;
-    std::vector<Sink::Factory> sinks;
-  } const config;
+  enum class Mode {
+    OVERRIDE,
+    DISCARD,
+    MERGE,
+  };
 
-  explicit ObjectExtractor(const Config& config, const std::set<uint32_t>& labels);
+  explicit HashedCloud(float resolution_m);
 
-  void detect(const ActiveWindowOutput& msg);
+  void addPoint(const Pos& pos, Mode mode = Mode::DISCARD);
 
-  void updateGraph(uint64_t timestamp, spark_dsg::DynamicSceneGraph& graph);
+  size_t size() const override;
 
- private:
-  void updatePoints(const ActiveWindowOutput& msg);
+  Pos get(size_t index) const override;
+
+  float intersection(const HashedCloud& other) const;
+
+  float iou(const HashedCloud& other) const;
+
+  void erase(const std::function<bool(const Pos&)>& should_erase,
+             PosMap* erased = nullptr);
 
  private:
   const spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
 
-  struct ObjectInfo {
-    using Point = Mesh::Pos;
-    uint32_t label;
-    spatial_hash::IndexHashMap<Point> active;
-    spatial_hash::IndexHashMap<Point> frozen;
-
-    float intersection(const spatial_hash::IndexHashMap<Point>& points) const;
+  struct Entry {
+    Pos pos;
+    spatial_hash::VoxelIndex index;
+    size_t count = 1;
   };
 
-  Sink::List sinks_;
-  std::set<uint32_t> labels_;
-  spark_dsg::NodeSymbol next_node_id_;
-  std::map<uint32_t, HashedCloud> points_;
-  std::map<spark_dsg::NodeId, ObjectInfo> objects_;
-
-  std::vector<spark_dsg::NodeId> deleted_;
-  std::vector<spark_dsg::NodeId> archived_;
+  std::vector<Entry> points_;
+  spatial_hash::IndexHashMap<size_t> lookup_;
 };
-
-void declare_config(ObjectExtractor::Config& config);
 
 }  // namespace hydra

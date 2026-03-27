@@ -44,6 +44,8 @@
 namespace hydra {
 
 using BoxType = spark_dsg::BoundingBox::Type;
+using ComponentIndices = std::vector<std::vector<size_t>>;
+using ComponentAdaptor = spark_dsg::BoundingBox::PointAdaptor;
 
 bool updateNodeCentroid(const spark_dsg::Mesh& mesh,
                         const std::vector<size_t>& indices,
@@ -62,7 +64,7 @@ spark_dsg::BoundingBox fitBoxToFilteredMesh(const Mesh& mesh,
                                             int inlier_min_neighbors = 5,
                                             double inlier_search_radius = 0.1);
 
-std::vector<std::vector<size_t>> getConnectedComponents(const Mesh::Positions& cloud,
-                                                        float connection_radius);
+ComponentIndices getConnectedComponents(const ComponentAdaptor& points,
+                                        float connection_radius);
 
 }  // namespace hydra

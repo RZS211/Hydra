@@ -127,16 +127,31 @@ TEST(ObjectExtractor, Clustering) {
   config.min_object_size = 4;
   ObjectExtractor extractor(config, {1, 2});
 
-  MapFixture fixture;
-  fixture.addPoints(1, {1, 2, 3}, dims);
-  fixture.addPoints(2, {4, 5, 6}, dims);
-  extractor.detect(fixture.makeMsg());
-  extractor.updateGraph(0, graph);
+  { // setup original objects
+    MapFixture fixture;
+    fixture.addPoints(1, {1, 2, 3}, dims);
+    fixture.addPoints(2, {4, 5, 6}, dims);
+    extractor.detect(fixture.makeMsg());
+    extractor.updateGraph(0, graph);
 
-  const std::map<NodeId, NodeResult> expected{
-      {"O0"_id, {1, BoundingBox(dims, {1, 2, 3}), true}},
-      {"O1"_id, {2, BoundingBox(dims, {4, 5, 6}), true}}};
-  checkGraph(graph, expected);
+    const std::map<NodeId, NodeResult> expected{
+        {"O0"_id, {1, BoundingBox(dims, {1, 2, 3}), true}},
+        {"O1"_id, {2, BoundingBox(dims, {4, 5, 6}), true}}};
+    checkGraph(graph, expected);
+  }
+
+  { // readd original objects
+    MapFixture fixture;
+    fixture.addPoints(1, {1, 2, 3}, dims);
+    fixture.addPoints(2, {4, 5, 6}, dims);
+    extractor.detect(fixture.makeMsg());
+    extractor.updateGraph(0, graph);
+
+    const std::map<NodeId, NodeResult> expected{
+        {"O0"_id, {1, BoundingBox(dims, {1, 2, 3}), true}},
+        {"O1"_id, {2, BoundingBox(dims, {4, 5, 6}), true}}};
+    checkGraph(graph, expected);
+  }
 }
 
 TEST(ObjectExtractor, DeletedObject) {

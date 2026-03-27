@@ -32,66 +32,89 @@
  * Government is authorized to reproduce and distribute reprints for Government
  * purposes notwithstanding any copyright notation herein.
  * -------------------------------------------------------------------------- */
-#pragma once
-#include <spark_dsg/dynamic_scene_graph.h>
-#include <spark_dsg/node_attributes.h>
-#include <spatial_hash/grid.h>
-
-#include "hydra/active_window/active_window_output.h"
-#include "hydra/common/output_sink.h"
 #include "hydra/utils/hashed_cloud.h"
-#include "hydra/utils/logging.h"
+
+#include <glog/logging.h>
 
 namespace hydra {
 
-class ObjectExtractor {
- public:
-  using Sink = OutputSink<const ActiveWindowOutput&>;
-  struct Config : VerbosityConfig {
-    Config();
+using spatial_hash::IndexSet;
 
-    std::string layer_id = spark_dsg::DsgLayers::OBJECTS;
-    float grid_resolution_m = 0.05f;
-    bool clear_freespace = true;
-    float min_observation_weight = 1.0e-4f;
-    size_t min_object_size = 30;
-    float cluster_tolerance = 0.25f;
-    float min_intersection_volume = 0.1;
-    spark_dsg::BoundingBox::Type bounding_box_type = spark_dsg::BoundingBox::Type::AABB;
-    std::vector<Sink::Factory> sinks;
-  } const config;
+HashedCloud::HashedCloud(float resolution_m) : grid_(resolution_m) {}
 
-  explicit ObjectExtractor(const Config& config, const std::set<uint32_t>& labels);
+size_t HashedCloud::size() const { return points_.size(); }
 
-  void detect(const ActiveWindowOutput& msg);
+HashedCloud::Pos HashedCloud::get(size_t index) const {
+  return points_.at(index).pos;
+}
 
-  void updateGraph(uint64_t timestamp, spark_dsg::DynamicSceneGraph& graph);
+void HashedCloud::addPoint(const Pos& pos, Mode mode) {
+  const auto idx = grid_.toIndex(pos);
+  auto iter = lookup_.find(idx);
+  if (iter == lookup_.end()) {
+    lookup_.emplace(idx, points_.size());
+    points_.push_back({pos, idx});
+    return;
+  }
 
- private:
-  void updatePoints(const ActiveWindowOutput& msg);
+  auto& point = points_[iter->second];
 
- private:
-  const spatial_hash::Grid<spatial_hash::VoxelIndex> grid_;
+  float ratio;
+  switch (mode) {
+    case Mode::OVERRIDE:
+      point.pos = pos;
+      break;
+    case Mode::MERGE:
+      ratio = 1.0 / point.count;
+      point.pos = (1.0f - ratio) * point.pos + ratio * pos;
+      ++point.count;
+      break;
+    case Mode::DISCARD:
+    default:
+      return;
+  }
+}
 
-  struct ObjectInfo {
-    using Point = Mesh::Pos;
-    uint32_t label;
-    spatial_hash::IndexHashMap<Point> active;
-    spatial_hash::IndexHashMap<Point> frozen;
+void HashedCloud::erase(const std::function<bool(const Pos&)>& should_erase,
+                        PosMap* erased) {
+  std::vector<Entry> new_points;
+  for (const auto& point : points_) {
+    if (!should_erase(point.pos)) {
+      lookup_[point.index] = new_points.size();
+      new_points.push_back(point);
+      continue;
+    }
 
-    float intersection(const spatial_hash::IndexHashMap<Point>& points) const;
-  };
+    lookup_.erase(point.index);
+    if (erased) {
+      erased->emplace(point.index, point.pos);
+    }
+  }
 
-  Sink::List sinks_;
-  std::set<uint32_t> labels_;
-  spark_dsg::NodeSymbol next_node_id_;
-  std::map<uint32_t, HashedCloud> points_;
-  std::map<spark_dsg::NodeId, ObjectInfo> objects_;
+  points_ = std::move(new_points);
+}
 
-  std::vector<spark_dsg::NodeId> deleted_;
-  std::vector<spark_dsg::NodeId> archived_;
-};
+float HashedCloud::intersection(const HashedCloud& other) const {
+  size_t num_equal = 0;
+  for (const auto& [idx, _] : lookup_) {
+    num_equal += other.lookup_.count(idx);
+  }
 
-void declare_config(ObjectExtractor::Config& config);
+  return static_cast<float>(num_equal) / lookup_.size();
+}
+
+float HashedCloud::iou(const HashedCloud& other) const {
+  if (lookup_.empty() && other.lookup_.empty()) {
+    return 0.0f;
+  }
+
+  size_t num_equal = 0;
+  for (const auto& [idx, _] : lookup_) {
+    num_equal += other.lookup_.count(idx);
+  }
+
+  size_t total = lookup_.size() + other.lookup_.size();
+  return static_cast<float>(num_equal) / (total - num_equal);
+}
 
 }  // namespace hydra

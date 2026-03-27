@@ -95,7 +95,8 @@ size_t makeSemanticNodeFinders(const SceneGraphLayer& layer,
  */
 class PointNeighborSearch {
  public:
-  explicit PointNeighborSearch(const std::vector<Eigen::Vector3f>& points);
+  using Adapter = spark_dsg::BoundingBox::PointAdaptor;
+  explicit PointNeighborSearch(const Adapter& points);
   virtual ~PointNeighborSearch();
 
   // Lookup.
