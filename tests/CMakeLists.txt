@@ -33,10 +33,12 @@ add_executable(
   loop_closure/test_subgraph_extraction.cpp
   odometry/test_pose_graph_from_odom.cpp
   openset/test_embedding_distances.cpp
-  places/test_graph_extractor_utilities.cpp
-  places/test_graph_extractor.cpp
-  places/test_gvd_integrator.cpp
-  places/test_gvd_utilities.cpp
+  places/gvd_places/test_compressed_node.cpp
+  places/gvd_places/test_graph_extractor.cpp
+  places/gvd_places/test_graph_extractor_utilities.cpp
+  places/gvd_places/test_gvd_integrator.cpp
+  places/gvd_places/test_gvd_merge_policies.cpp
+  places/gvd_places/test_gvd_utilities.cpp
   places/test_traversability.cpp
   reconstruction/test_integration_masking.cpp
   reconstruction/test_marching_cubes.cpp
