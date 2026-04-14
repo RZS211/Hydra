@@ -47,7 +47,7 @@
 
 DEFINE_string(result_dir, "", "directory to read from");
 DEFINE_string(g2o_file, "pgmo/result.g2o", "file to read");
-DEFINE_string(pgmo_file, "pgmo/deformation_graph.dgrf", "deformation graph");
+DEFINE_string(pgmo_file, "pgmo/deformation_graph.json", "deformation graph");
 DEFINE_string(dsg_file, "backend/dsg.json", "file to read");
 DEFINE_string(config_file, "gt_sidpac_f34.yaml", "file to read");
 DEFINE_string(agent_prefix, "a", "agent prefix");
@@ -269,11 +269,9 @@ void output(const gtsam::NonlinearFactorGraph& factors, gtsam::Values& values) {
 void load_factors_pgmo(gtsam::NonlinearFactorGraph& factors, gtsam::Values& values) {
   const std::string pgmo_file = FLAGS_result_dir + "/" + FLAGS_pgmo_file;
 
-  kimera_pgmo::DeformationGraph graph;
-  graph.load(pgmo_file);
-
-  factors = *graph.getFactors();
-  values = *graph.getValues();
+  const auto graph = kimera_pgmo::DeformationGraph::loadFromFile(pgmo_file);
+  factors = *graph->getFactors();
+  values = *graph->getValues();
 }
 
 void add_manual_loop_clousres(const YAML::Node& config,
