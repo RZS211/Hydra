@@ -100,10 +100,9 @@ TEST(GenericUpdateFunctor, shouldUpdate) {
     graph.emplaceNode(DsgLayers::OBJECTS, 0, std::move(attrs));
   }
 
-  const auto dgraph = kimera_pgmo::DeformationGraph::loadFromFile(
-      test::get_resource_path() / "graph.dgrf");
-  UpdateInfo::ConstPtr info(
-      new UpdateInfo{0, nullptr, nullptr, false, {}, dgraph.get()});
+  const auto dgraph_path = test::get_resource_path() / "graph.json";
+  const auto dgraph = kimera_pgmo::DeformationGraph::load(dgraph_path);
+  UpdateInfo::Ptr info(new UpdateInfo{0, nullptr, nullptr, false, {}, dgraph.get()});
   auto config = defaultConfig();
   config.enable_merging = false;
   VLOG(1) << "Using config:\n" << config::toString(config);

@@ -269,7 +269,7 @@ void output(const gtsam::NonlinearFactorGraph& factors, gtsam::Values& values) {
 void load_factors_pgmo(gtsam::NonlinearFactorGraph& factors, gtsam::Values& values) {
   const std::string pgmo_file = FLAGS_result_dir + "/" + FLAGS_pgmo_file;
 
-  const auto graph = kimera_pgmo::DeformationGraph::loadFromFile(pgmo_file);
+  const auto graph = kimera_pgmo::DeformationGraph::load(pgmo_file);
   factors = *graph->getFactors();
   values = *graph->getValues();
 }
