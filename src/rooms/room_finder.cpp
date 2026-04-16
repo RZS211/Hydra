@@ -309,8 +309,8 @@ SceneGraphLayer::Ptr RoomFinder::findRooms(const SceneGraphLayer& places) {
     cluster_room_map_.clear();
     return makeRoomLayer(places);
   }
-
   setupDistanceAdaptor(places);
+
   const auto components = getBestComponents(places);
   if (components.empty()) {
     VLOG(2) << "[Room Finder] No components found";

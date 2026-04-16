@@ -50,33 +50,34 @@ Eigen::Vector3d getRoomPosition(const SceneGraphLayer& places,
     room_position += getNodePosition(places, place);
   }
   room_position /= cluster.size();
+  return room_position;
 
-  double best_radius = 0.0;
-  Eigen::Vector3d best_position = Eigen::Vector3d::Zero();
-  double best_distance = std::numeric_limits<double>::infinity();
+  // double best_radius = 0.0;
+  // Eigen::Vector3d best_position = Eigen::Vector3d::Zero();
+  // double best_distance = std::numeric_limits<double>::infinity();
 
-  bool room_in_freespace = false;
-  for (const auto& place : cluster) {
-    const auto& node = places.getNode(place);
-    const auto& position = node.attributes().position;
-    const double room_distance = (room_position - position).norm();
-    const double distance = get_distance(node);
-    const double distance_to_freespace = room_distance - distance;
+  // bool room_in_freespace = false;
+  // for (const auto& place : cluster) {
+  //   const auto& node = places.getNode(place);
+  //   const auto& position = node.attributes().position;
+  //   const double room_distance = (room_position - position).norm();
+  //   const double distance = get_distance(node);
+  //   const double distance_to_freespace = room_distance - distance;
 
-    if (distance_to_freespace < best_distance) {
-      best_distance = distance_to_freespace;
-      best_radius = distance;
-      best_position = position;
-    }
-  }
+  //   if (distance_to_freespace < best_distance) {
+  //     best_distance = distance_to_freespace;
+  //     best_radius = distance;
+  //     best_position = position;
+  //   }
+  // }
 
-  if (room_in_freespace) {
-    return room_position;
-  }
+  // if (room_in_freespace) {
+  //   return room_position;
+  // }
 
-  // project room centroid to edge of free-space radius
-  Eigen::Vector3d unit_vector = (room_position - best_position).normalized();
-  return best_position + unit_vector * best_radius;
+  // // project room centroid to edge of free-space radius
+  // Eigen::Vector3d unit_vector = (room_position - best_position).normalized();
+  // return best_position + unit_vector * best_radius;
 }
 
 void addEdgesToRoomLayer(const SceneGraphLayer& places,
