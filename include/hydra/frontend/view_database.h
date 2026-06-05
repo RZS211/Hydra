@@ -20,8 +20,19 @@ class ViewDatabase {
   void updateAssignments(const DynamicSceneGraph& graph,
                          const std::unordered_set<NodeId>& active_places) const;
 
+  // Assign features to ALL unassigned place nodes using all accumulated views.
+  // Call this after frontend thread stops (no race condition).
+  void finalizeFeatures(const DynamicSceneGraph& graph) const;
+
  protected:
+  // Active views (pruned by distance from active places)
   mutable ViewSelector::FeatureList views_;
+  // All views ever seen (camera position + feature), for finalize step
+  struct ViewRecord {
+    Eigen::Vector3d cam_w;
+    FeatureVector feature;
+  };
+  mutable std::vector<ViewRecord> all_views_;
   std::unique_ptr<ViewSelector> view_selector_;
 };
 

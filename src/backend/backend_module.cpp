@@ -148,6 +148,7 @@ void BackendModule::stopImpl() {
 void BackendModule::stop() { stopImpl(); }
 
 void BackendModule::save(const LogSetup& log_setup) {
+  LOG(INFO) << "[BackendModule] save() called, private_dsg_ nodes: " << private_dsg_->graph->numNodes();
   std::lock_guard<std::mutex> lock(mutex_);
   const auto backend_path = log_setup.getLogDir("backend");
   const auto pgmo_path = log_setup.getLogDir("backend/pgmo");

@@ -132,4 +132,33 @@ struct FusionViewSelector : ViewSelector {
       config::Registration<ViewSelector, FusionViewSelector>("fusion");
 };
 
+// Assigns the feature from the nearest camera view regardless of view frustum.
+// This ensures all place nodes receive a feature even if they were never
+// directly in the camera's field of view (e.g., behind walls, room corners).
+struct NearestViewSelector : ViewSelector {
+  void selectFeature(const FeatureList& views,
+                     SemanticNodeAttributes& attrs) const override {
+    const FeatureView* best_view = nullptr;
+    double min_dist = std::numeric_limits<double>::max();
+    for (const auto& view : views) {
+      if (!view) {
+        continue;
+      }
+      // Camera position in world frame (sensor_T_world: world→sensor, so inverse gives sensor→world)
+      const Eigen::Vector3d cam_w = view->sensor_T_world.inverse().translation();
+      const auto dist = (attrs.position - cam_w).norm();
+      if (dist < min_dist) {
+        best_view = view.get();
+        min_dist = dist;
+      }
+    }
+    if (best_view) {
+      attrs.semantic_feature = best_view->feature;
+    }
+  }
+
+  inline static const auto registration_ =
+      config::Registration<ViewSelector, NearestViewSelector>("nearest");
+};
+
 }  // namespace hydra

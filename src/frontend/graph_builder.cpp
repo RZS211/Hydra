@@ -187,6 +187,13 @@ void GraphBuilder::stopImpl() {
     VLOG(2) << "[Hydra Frontend] stopped!";
   }
 
+  // Assign features to all unassigned place nodes using all accumulated views.
+  // Safe here: frontend thread has already joined, no concurrent DSG writes.
+  if (dsg_) {
+    std::unique_lock<std::mutex> lock(dsg_->mutex);
+    view_database_.finalizeFeatures(*dsg_->graph);
+  }
+
   VLOG(2) << "[Hydra Frontend]: " << queue_->size() << " messages left";
 }
 
